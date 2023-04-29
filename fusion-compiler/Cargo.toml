@@ -7,3 +7,8 @@ edition = "2021"
 
 [dependencies]
 termion = "2.0.1"
+lazy_static = "1.4.0"
+
+[dependencies.inkwell]
+version = "0.1.1"
+features = ["llvm15-0"]

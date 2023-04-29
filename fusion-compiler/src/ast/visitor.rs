@@ -1,5 +1,5 @@
 use termion::color::{Fg, Reset};
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTExprId, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStmtId, ASTUnaryExpression, ASTVariableExpression, ASTWhileStatement};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTClassStatement, ASTExpression, ASTExpressionKind, ASTExprId, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTMemberAccessExpression, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTSelfExpression, ASTStatement, ASTStatementKind, ASTStmtId, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement};
 use crate::text::span::TextSpan;
 use crate::ast::printer::ASTPrinter;
 
@@ -13,8 +13,8 @@ pub trait ASTVisitor {
             ASTStatementKind::Expression(expr) => {
                 self.visit_expression(expr);
             }
-            ASTStatementKind::Let(expr) => {
-                self.visit_let_statement(expr);
+            ASTStatementKind::Let(stmt) => {
+                self.visit_let_statement(stmt, &statement);
             }
             ASTStatementKind::If(stmt) => {
                 self.visit_if_statement(stmt);
@@ -28,15 +28,20 @@ pub trait ASTVisitor {
             ASTStatementKind::FuncDecl(stmt) => {
                 self.visit_func_decl_statement(stmt);
             }
-            ASTStatementKind::Return(stmt) => {
-                self.visit_return_statement(stmt);
+            ASTStatementKind::Return(return_stmt) => {
+                self.visit_return_statement(return_stmt, &statement);
+            }
+            ASTStatementKind::Class(class_stmt) => {
+                self.visit_class_statement(class_stmt, &statement);
             }
         }
     }
 
+    fn visit_class_statement(&mut self, class_statement: &ASTClassStatement, statement: &ASTStatement);
+
     fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement);
 
-    fn visit_return_statement(&mut self, return_statement: &ASTReturnStatement) {
+    fn visit_return_statement(&mut self, return_statement: &ASTReturnStatement, stmt: &ASTStatement) {
         if let Some(expr) = &return_statement.return_value {
             self.visit_expression(expr);
         }
@@ -60,7 +65,7 @@ pub trait ASTVisitor {
             self.visit_statement(&else_branch.else_statement);
         }
     }
-    fn visit_let_statement(&mut self, let_statement: &ASTLetStatement);
+    fn visit_let_statement(&mut self, let_statement: &ASTLetStatement, statement: &ASTStatement);
     fn visit_statement(&mut self, statement: &ASTStmtId) {
         self.do_visit_statement(statement);
     }
@@ -79,8 +84,8 @@ pub trait ASTVisitor {
             ASTExpressionKind::Error(span) => {
                 self.visit_error(span);
             }
-            ASTExpressionKind::Variable(expr) => {
-                self.visit_variable_expression(expr, &expression);
+            ASTExpressionKind::Identifier(expr) => {
+                self.visit_identifier_expression(expr, &expression);
             }
             ASTExpressionKind::Unary(expr) => {
                 self.visit_unary_expression(expr, &expression);
@@ -95,8 +100,24 @@ pub trait ASTVisitor {
                 self.visit_call_expression(expr, &expression);
             }
 
+            ASTExpressionKind::String(expr) => {
+                self.visit_string_expression(expr, &expression);
+            }
+            ASTExpressionKind::MemberAccess(expr) => {
+                self.visit_member_access_expression(expr, &expression);
+            }
+            ASTExpressionKind::Self_(expr) => {
+                self.visit_self_expression(expr, &expression);
+            }
         }
     }
+
+    fn visit_self_expression(&mut self, self_expression: &ASTSelfExpression, expr: &ASTExpression);
+
+    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression);
+
+    fn visit_string_expression(&mut self, string_expression: &ASTStringExpression, expr: &ASTExpression);
+
     fn visit_call_expression(&mut self, call_expression: &ASTCallExpression, expr: &ASTExpression) {
         for argument in &call_expression.arguments {
             self.visit_expression(argument);
@@ -110,7 +131,7 @@ pub trait ASTVisitor {
         self.visit_expression(&assignment_expression.expression);
     }
 
-    fn visit_variable_expression(&mut self, variable_expression: &ASTVariableExpression, expr: &ASTExpression);
+    fn visit_identifier_expression(&mut self, variable_expression: &ASTIdentifierExpression, expr: &ASTExpression);
 
     fn visit_number_expression(&mut self, number: &ASTNumberExpression, expr: &ASTExpression);
 

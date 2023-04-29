@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::format;
 
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBinaryOperatorKind, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTUnaryExpression, ASTUnaryOperatorKind, ASTVariableExpression, ASTWhileStatement};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBinaryOperatorKind, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTClassStatement, ASTExpression, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTMemberAccessExpression, ASTNumberExpression, ASTParenthesizedExpression, ASTSelfExpression, ASTStatement, ASTStringExpression, ASTUnaryExpression, ASTUnaryOperatorKind, ASTIdentifierExpression, ASTWhileStatement};
 use crate::ast::visitor::ASTVisitor;
-use crate::compilation_unit::GlobalScope;
+use crate::compilation::global_scope::GlobalScope;
 use crate::text::span::TextSpan;
 
 pub struct Frame {
@@ -107,6 +107,10 @@ impl<'a> ASTVisitor for ASTEvaluator<'a> {
         self.ast
     }
 
+    fn visit_class_statement(&mut self, class_statement: &ASTClassStatement, statement: &ASTStatement) {
+        todo!()
+    }
+
     fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement) {}
 
     fn visit_while_statement(&mut self, while_statement: &ASTWhileStatement) {
@@ -144,13 +148,25 @@ impl<'a> ASTVisitor for ASTEvaluator<'a> {
         self.pop_frame();
     }
 
-    fn visit_let_statement(&mut self, let_statement: &ASTLetStatement) {
+    fn visit_let_statement(&mut self, let_statement: &ASTLetStatement, statement: &ASTStatement) {
         self.visit_expression(&let_statement.initializer);
         self.frames.insert(let_statement.identifier.span.literal.clone(), self.last_value.unwrap());
     }
 
+    fn visit_self_expression(&mut self, self_expression: &ASTSelfExpression, expr: &ASTExpression) {
+        todo!()
+    }
+
+    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression) {
+        todo!()
+    }
+
+    fn visit_string_expression(&mut self, string_expression: &ASTStringExpression, expr: &ASTExpression) {
+        self.last_value = Some(string_expression.open_quote.span.start as i64);
+    }
+
     fn visit_call_expression(&mut self, call_expression: &ASTCallExpression, expr: &ASTExpression) {
-        let function = self.global_scope.lookup_function(&call_expression.identifier.span.literal).unwrap();
+        let function = self.global_scope.lookup_function("&call_expression.identifier.span.literal").unwrap();
         let mut arguments = Vec::new();
         for argument in &call_expression.arguments {
             self.visit_expression(argument);
@@ -162,7 +178,24 @@ impl<'a> ASTVisitor for ASTEvaluator<'a> {
             self.frames.insert(parameter_name, *argument);
         }
 
-        self.visit_statement(&function.body);
+        match &function.body {
+            Some(body) => {
+                self.visit_statement(body);
+            }
+            _ => {
+                if function.is_external() {
+                    match function.name.as_str() {
+                        "printf" => {
+                            let value = self.frames.get(&arguments[0].to_string()).unwrap();
+                            println!("{}", value);
+                        }
+                        _ => {
+                            panic!("Function {} is not implemented", function.name);
+                        }
+                    }
+                }
+            }
+        }
         self.pop_frame();
     }
 
@@ -172,7 +205,7 @@ impl<'a> ASTVisitor for ASTEvaluator<'a> {
         self.frames.update(identifier.clone(), self.last_value.unwrap());
     }
 
-    fn visit_variable_expression(&mut self, variable_expression: &ASTVariableExpression, expr: &ASTExpression) {
+    fn visit_identifier_expression(&mut self, variable_expression: &ASTIdentifierExpression, expr: &ASTExpression) {
         let identifier = &variable_expression.identifier.span.literal;
         self.last_value = Some(*self.frames.get(identifier).expect(format!("Variable {} not found", identifier).as_str()));
     }

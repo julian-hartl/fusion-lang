@@ -7,8 +7,8 @@ use crate::typings::Type;
 
 pub mod printer;
 
-#[derive(Clone, Copy, Debug)]
-pub enum DiagnosticKind {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DiagnosticSeverity {
     Error,
     Warning,
 }
@@ -18,12 +18,12 @@ pub enum DiagnosticKind {
 pub struct Diagnostic {
     pub message: String,
     pub span: TextSpan,
-    pub kind: DiagnosticKind,
+    pub severity: DiagnosticSeverity,
 }
 
 impl Diagnostic {
-    pub fn new(message: String, span: TextSpan, kind: DiagnosticKind) -> Self {
-        Diagnostic { message, span, kind }
+    pub fn new(message: String, span: TextSpan, kind: DiagnosticSeverity) -> Self {
+        Diagnostic { message, span, severity: kind }
     }
 }
 
@@ -39,18 +39,26 @@ impl DiagnosticsBag {
         DiagnosticsBag { diagnostics: vec![] }
     }
 
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics.iter().any(|d| d.severity == DiagnosticSeverity::Error)
+    }
+
     pub fn report_error(&mut self, message: String, span: TextSpan) {
-        let error = Diagnostic::new(message, span, DiagnosticKind::Error);
+        let error = Diagnostic::new(message, span, DiagnosticSeverity::Error);
         self.diagnostics.push(error);
     }
 
     pub fn report_warning(&mut self, message: String, span: TextSpan) {
-        let warning = Diagnostic::new(message, span, DiagnosticKind::Warning);
+        let warning = Diagnostic::new(message, span, DiagnosticSeverity::Warning);
         self.diagnostics.push(warning);
     }
 
     pub fn report_unexpected_token(&mut self, expected: &TokenKind, token: &Token) {
         self.report_error(format!("Expected <{}>, found <{}>", expected, token.kind), token.span.clone());
+    }
+    pub fn report_unexpected_token_multiple(&mut self, expected: &[TokenKind], token: &Token) {
+        let expected = expected.iter().map(|t| format!("<{}>", t)).collect::<Vec<_>>().join(", ");
+        self.report_error(format!("Expected one of {}, found <{}>", expected, token.kind), token.span.clone());
     }
     pub fn report_expected_expression(&mut self, token: &Token) {
         self.report_error(format!("Expected expression, found <{}>", token.kind), token.span.clone());
@@ -64,8 +72,8 @@ impl DiagnosticsBag {
         self.report_error(format!("Undeclared function '{}'", token.span.literal), token.span.clone());
     }
 
-    pub fn report_invalid_argument_count(&mut self, token: &Token, expected: usize, actual: usize) {
-        self.report_error(format!("Function '{}' expects {} arguments, but was given {}", token.span.literal, expected, actual), token.span.clone());
+    pub fn report_invalid_argument_count(&mut self, callee_span: &TextSpan, expected: usize, actual: usize) {
+        self.report_error(format!("Function expects {} arguments, but was given {}", expected, actual), callee_span.clone());
     }
 
     pub fn report_function_already_declared(&mut self, token: &Token) {
@@ -83,12 +91,61 @@ impl DiagnosticsBag {
     pub fn report_cannot_return_outside_function(&mut self, token: &Token) {
         self.report_error(format!("Cannot use 'return' outside of function"), token.span.clone());
     }
+
+    pub fn report_unreachable_code(&mut self, span: &TextSpan) {
+        self.report_warning(format!("Unreachable code"), span.clone());
+    }
+
+    pub fn report_illegal_function_modifier(&mut self, token: &Token) {
+        self.report_error(format!("Illegal function modifier '{}'", token.span.literal), token.span.clone());
+    }
+
+    pub fn report_invalid_escape_sequence(&mut self, token: &Token) {
+        self.report_error(format!("Invalid escape sequence '{}'", token.span.literal), token.span.clone());
+    }
+
+    pub fn report_missing_return(&mut self, span: &TextSpan) {
+        self.report_error(format!("Missing return statement"), span.clone());
+    }
+
+    pub fn report_invalid_class_member(&mut self, span: &TextSpan) {
+        self.report_error(format!("Invalid class member '{}'", span.literal), span.clone());
+    }
+
+    pub fn report_class_already_declared(&mut self, token: &Token) {
+        self.report_error(format!("Class '{}' already declared", token.span.literal), token.span.clone());
+    }
+
+    pub fn report_expression_not_callable(&mut self, ty: &Type, span: &TextSpan) {
+        self.report_error(format!("'{}' is not callable", ty), span.clone());
+    }
+
+    pub fn report_invalid_member_access(&mut self, span: &TextSpan, ty: &Type) {
+        self.report_error(format!("Invalid member access on type '{}'", ty), span.clone());
+    }
+
+    pub fn report_member_not_found(&mut self, span: &TextSpan, ty: &Type) {
+        self.report_error(format!("Member '{}' not found on type '{}'", span.literal, ty), span.clone());
+    }
+
+    pub fn report_self_outside_class(&mut self, span: &TextSpan) {
+        self.report_error(format!("'self' can only be used inside a class"), span.clone());
+    }
+
+    pub fn report_self_not_declared(&mut self, span: &TextSpan) {
+        self.report_error(format!("'self' not declared"), span.clone());
+    }
+
+    pub fn report_self_not_first_parameter(&mut self, span: &TextSpan) {
+        self.report_error(format!("'self' must be the first parameter"), span.clone());
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::compilation_unit::CompilationUnit;
-    use crate::diagnostics::{Diagnostic, DiagnosticKind};
+    use crate::compilation::CompilationUnit;
+    use crate::diagnostics::{Diagnostic, DiagnosticSeverity};
+    use crate::text::SourceText;
     use crate::text::span::TextSpan;
 
     struct DiagnosticsVerifier {
@@ -107,7 +164,8 @@ mod test {
 
         fn compile(input: &str) -> Vec<Diagnostic> {
             let raw = Self::get_raw_text(input);
-            let compilation_unit = CompilationUnit::compile(&raw);
+            let source_text = SourceText::new(&raw,None);
+            let compilation_unit = CompilationUnit::compile(&source_text);
             match compilation_unit {
                 Ok(_) => vec![],
                 Err(e) => e.borrow().diagnostics.clone(),
@@ -135,7 +193,7 @@ mod test {
                         let literal = &raw_text[start_index..end_index];
                         let span = TextSpan::new(start_index, end_index, literal.to_string());
                         let message = messages[diagnostics.len()].to_string();
-                        let diagnostic = Diagnostic::new(message, span, DiagnosticKind::Error);
+                        let diagnostic = Diagnostic::new(message, span, DiagnosticSeverity::Error);
                         diagnostics.push(diagnostic);
                     }
                     _ => {
@@ -561,6 +619,54 @@ b
 
         let expected = vec![
             "Expected type 'bool', found 'int'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    pub fn should_report_dead_code_when_using_return_in_if() {
+        let input = "\
+        func a() -> int {
+            if true {
+                return 1
+            }
+            «return 2»
+        }
+        ";
+
+        let expected = vec![
+            "Unreachable code"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    pub fn should_report_unused_function() {
+        let input = "\
+        func «b»() {}
+        ";
+
+        let expected = vec![
+            "Unused function 'b'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    pub fn should_report_missing_return_in_not_void_function() {
+        let input = "\
+        func a() -> int {
+            «if true {
+                return 1
+            }»
+        }
+        ";
+
+        let expected = vec![
+            "Missing return statement"
         ];
 
         assert_diagnostics(input, expected);

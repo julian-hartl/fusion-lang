@@ -1,18 +1,26 @@
+use std::path::Path;
+
 pub mod span;
+pub mod io;
 
 pub struct SourceText {
-    text: String,
+    pub text: String,
+    pub path: Option<String>,
 }
 
 impl SourceText {
-    pub fn new(text: String) -> Self {
+    pub fn new(text: &str, path: Option<&str>) -> Self {
         Self {
-            text
+            text: text  .to_string(),
+            path: path.map(|path| path.to_string()),
         }
     }
 
-    pub fn line_index(&self, position: usize) -> usize {
-        self.text[..=position].lines().count() - 1
+    pub fn line_index(&self, position: usize) -> Option<usize> {
+        if position >= self.text.len() {
+            return None;
+        }
+        return Some(self.text[..=position].lines().count() - 1);
     }
 
     pub fn get_line(&self, index: usize) -> &str {

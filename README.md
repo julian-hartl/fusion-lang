@@ -102,3 +102,71 @@ What do we have to consider?
  ```
  let hello_world = "Hello world\""
  ```
+
+# Building LLVM 15.0.0 for Rust Compiler on Mac M1
+
+This guide provides instructions on how to build LLVM 15.0.0 for the Rust compiler on a Mac M1.
+
+## Prerequisites
+
+- Xcode and Command Line Tools
+- CMake and Ninja (can be installed via Homebrew)
+
+## Step-by-step Instructions
+
+### 1. Clone the LLVM project repository
+
+```sh
+git clone https://github.com/llvm/llvm-project.git
+```
+
+### 2. Checkout the specific LLVM version (15.0.0)
+
+```sh
+cd llvm-project
+git checkout llvmorg-15.0.0
+```
+
+### 3. Configure and build LLVM, Clang, and other required sub-projects
+
+   ```sh
+   mkdir build
+   cd build
+   cmake -G "Xcode" -DLLVM_ENABLE_PROJECTS="clang;lld" -DLLVM_TARGETS_TO_BUILD="AArch64" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local ../llvm
+   ```
+
+### 4. Build LLVM and the sub-projects
+
+   ```sh
+   cmake --build . --config Release -- -jobs $(sysctl -n hw.logicalcpu)5. Run the tests (optional)
+   ```
+
+### 5. Run the tests (optional)
+
+```sh
+cmake --build . --config Release --target check-all
+```
+
+### 6. Install LLVM and the sub-projects
+
+   ```sh
+   sudo cmake --build . --config Release --target install
+```
+
+### 7. Set LLVM_SYS_150_PREFIX environment variable
+
+```sh
+export LLVM_SYS_150_PREFIX=/usr/local
+```
+
+
+### Troubleshooting
+
+#### Unable to parse result of llvm-config --system-libs: was "/opt/homebrew/lib/libzstd.1.5.2.dylib"
+
+1. Check `opt/homebrew/lib` and look for a file with a similar name but other version
+2. Create a symlink from the given to the required version
+```shell
+ln -sf /opt/homebrew/lib/libzstd.1.5.5.dylib /opt/homebrew/lib/libzstd.1.5.4.dylib
+```
+

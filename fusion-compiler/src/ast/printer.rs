@@ -16,6 +16,7 @@ impl <'a> ASTPrinter<'a> {
     const VARIABLE_COLOR: color::Green = color::Green;
     const BOOLEAN_COLOR: color::Yellow = color::Yellow;
     const TYPE_COLOR: color::LightBlue = color::LightBlue;
+    const STRING_COLOR: color::LightRed = color::LightRed;
 
     fn add_whitespace(&mut self) {
         self.result.push_str(" ");
@@ -71,14 +72,71 @@ impl <'a> ASTPrinter<'a> {
         self.add_type(&type_annotation.type_name.span.literal);
     }
 
+    fn add_string(&mut self, string: &str) {
+        self.result.push_str(&format!("{}{}",
+                                      Self::STRING_COLOR.fg_str(),
+                                      string, ));
+    }
+
     pub fn new(ast: &'a Ast) -> Self {
         Self { indent: 0, result: String::new(),ast }
+    }
+
+    pub fn print(mut self) -> String {
+        self.ast.visit(&mut self);
+        self.result
     }
 }
 
 impl ASTVisitor for ASTPrinter<'_> {
     fn get_ast(&self) -> &Ast {
         self.ast
+    }
+
+    fn visit_class_statement(&mut self, class_statement: &ASTClassStatement, statement: &ASTStatement) {
+        self.add_padding();
+        self.add_keyword("class");
+        self.add_whitespace();
+        self.add_text(&class_statement.identifier.span.literal);
+        self.add_whitespace();
+        if let Some(constructor) = &class_statement.constructor {
+            self.add_text("(");
+            for (i, field) in constructor.fields.iter().enumerate() {
+                if i != 0 {
+                    self.add_text(",");
+                    self.add_whitespace();
+                }
+                self.add_text(&field.identifier.span.literal);
+                self.add_type_annotation(&field.type_annotation);
+            }
+            self.add_text(")");
+        }
+        self.add_text("{");
+        self.add_newline();
+        self.indent += 1;
+        for member in class_statement.body.members.iter() {
+            match member {
+                ASTClassMember::Field(field) => {
+                    self.add_padding();
+                    self.add_text(&field.identifier.span.literal);
+                    self.add_type_annotation(&field.type_annotation);
+                    self.add_text(";");
+                    self.add_newline();
+                }
+                ASTClassMember::Method(method) => {
+                    self.add_padding();
+                    let stmt = self.ast.query_stmt(&method.func_decl).into_func_decl();
+                    self.visit_func_decl_statement(
+                        &stmt,
+                    );
+                }
+                ASTClassMember::Invalid(_) => {}
+            }
+        }
+        self.indent -= 1;
+        self.add_padding();
+        self.add_text("}");
+        self.add_newline();
     }
 
     fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement) {
@@ -97,16 +155,26 @@ impl ASTVisitor for ASTPrinter<'_> {
                 self.add_text(",");
                 self.add_whitespace();
             }
-            self.add_text(&parameter.identifier.span.literal);
-            self.add_type_annotation(&parameter.type_annotation);
+            match parameter {
+                FuncDeclParameter::Normal(parameter) => {
+                    self.add_text(&parameter.identifier.span.literal);
+                    self.add_type_annotation(&parameter.type_annotation);
+                }
+                FuncDeclParameter::Self_(_) => {
+                    self.add_keyword("self");
+                }
+            }
+
         }
         if !are_parameters_empty {
             self.add_text(")");
             self.add_whitespace();
         }
-        self.visit_statement(&func_decl_statement.body);
+        if let Some(body) = &func_decl_statement.body {
+            self.visit_statement(body);
+        }
     }
-    fn visit_return_statement(&mut self, return_statement: &ASTReturnStatement) {
+    fn visit_return_statement(&mut self, return_statement: &ASTReturnStatement, stmt: &ASTStatement) {
         self.add_keyword("return");
         if let Some(expression) = &return_statement.return_value {
             self.add_whitespace();
@@ -146,7 +214,7 @@ impl ASTVisitor for ASTPrinter<'_> {
         }
     }
 
-    fn visit_let_statement(&mut self, let_statement: &ASTLetStatement) {
+    fn visit_let_statement(&mut self, let_statement: &ASTLetStatement, statement: &ASTStatement) {
         self.add_keyword("let");
         self.add_whitespace();
         self.add_text(
@@ -168,8 +236,24 @@ impl ASTVisitor for ASTPrinter<'_> {
         ));
     }
 
+    fn visit_self_expression(&mut self, self_expression: &ASTSelfExpression, expr: &ASTExpression) {
+        self.add_keyword("self");
+    }
+
+    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression) {
+        self.visit_expression(&member_access_expression.object);
+        self.add_text(".");
+        self.add_text(&member_access_expression.target.span.literal);
+    }
+
+    fn visit_string_expression(&mut self, string_expression: &ASTStringExpression, expr: &ASTExpression) {
+        self.add_string("\"");
+        self.add_string(&string_expression.string.to_raw_string());
+        self.add_string("\"");
+    }
+
     fn visit_call_expression(&mut self, call_expression: &ASTCallExpression, expr: &ASTExpression) {
-        self.add_text(&call_expression.identifier.span.literal);
+        self.visit_expression(&call_expression.callee);
         self.add_text("(");
         for (i, argument) in call_expression.arguments.iter().enumerate() {
             if i != 0 {
@@ -189,7 +273,7 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.visit_expression(&assignment_expression.expression);
     }
 
-    fn visit_variable_expression(&mut self, variable_expression: &ASTVariableExpression, expr: &ASTExpression) {
+    fn visit_identifier_expression(&mut self, variable_expression: &ASTIdentifierExpression, expr: &ASTExpression) {
         self.result.push_str(&format!("{}{}",
                                       Self::VARIABLE_COLOR.fg_str(),
                                       variable_expression.identifier.span.literal, ));
