@@ -1,5 +1,5 @@
 use termion::color::{Fg, Reset};
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTClassStatement, ASTExpression, ASTExpressionKind, ASTExprId, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTMemberAccessExpression, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTSelfExpression, ASTStatement, ASTStatementKind, ASTStmtId, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement, ASTDerefExpression, ASTRefExpression, ASTCharExpression};
 use crate::text::span::TextSpan;
 use crate::ast::printer::ASTPrinter;
 
@@ -7,8 +7,7 @@ pub trait ASTVisitor {
 
     fn get_ast(&self) -> &Ast;
 
-    fn do_visit_statement(&mut self, statement: &ASTStmtId) {
-        let statement = self.get_ast().query_stmt(statement).clone();
+    fn do_visit_statement(&mut self, statement: &ASTStatement) {
         match &statement.kind {
             ASTStatementKind::Expression(expr) => {
                 self.visit_expression(expr);
@@ -31,13 +30,8 @@ pub trait ASTVisitor {
             ASTStatementKind::Return(return_stmt) => {
                 self.visit_return_statement(return_stmt, &statement);
             }
-            ASTStatementKind::Class(class_stmt) => {
-                self.visit_class_statement(class_stmt, &statement);
-            }
         }
     }
-
-    fn visit_class_statement(&mut self, class_statement: &ASTClassStatement, statement: &ASTStatement);
 
     fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement);
 
@@ -66,11 +60,10 @@ pub trait ASTVisitor {
         }
     }
     fn visit_let_statement(&mut self, let_statement: &ASTLetStatement, statement: &ASTStatement);
-    fn visit_statement(&mut self, statement: &ASTStmtId) {
+    fn visit_statement(&mut self, statement: &ASTStatement) {
         self.do_visit_statement(statement);
     }
-    fn do_visit_expression(&mut self, expression: &ASTExprId) {
-        let expression = self.get_ast().query_expr(expression).clone();
+    fn do_visit_expression(&mut self, expression: &ASTExpression) {
         match &expression.kind {
             ASTExpressionKind::Number(number) => {
                 self.visit_number_expression(number, &expression);
@@ -103,18 +96,22 @@ pub trait ASTVisitor {
             ASTExpressionKind::String(expr) => {
                 self.visit_string_expression(expr, &expression);
             }
-            ASTExpressionKind::MemberAccess(expr) => {
-                self.visit_member_access_expression(expr, &expression);
+            ASTExpressionKind::Ref(expr) => {
+                self.visit_ref_expression(expr);
             }
-            ASTExpressionKind::Self_(expr) => {
-                self.visit_self_expression(expr, &expression);
+            ASTExpressionKind::Deref(expr) => {
+                self.visit_deref_expression(expr);
+            }
+            ASTExpressionKind::Char(expr) => {
+                self.visit_char_expression(expr, &expression);
             }
         }
     }
 
-    fn visit_self_expression(&mut self, self_expression: &ASTSelfExpression, expr: &ASTExpression);
+    fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression);
 
-    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression);
+    fn visit_deref_expression(&mut self, deref_expression: &ASTDerefExpression);
+    fn visit_ref_expression(&mut self, ref_expression: &ASTRefExpression);
 
     fn visit_string_expression(&mut self, string_expression: &ASTStringExpression, expr: &ASTExpression);
 
@@ -123,7 +120,7 @@ pub trait ASTVisitor {
             self.visit_expression(argument);
         }
     }
-    fn visit_expression(&mut self, expression: &ASTExprId) {
+    fn visit_expression(&mut self, expression: &ASTExpression) {
         self.do_visit_expression(expression);
     }
 

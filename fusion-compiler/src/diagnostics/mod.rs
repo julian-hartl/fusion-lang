@@ -139,6 +139,38 @@ impl DiagnosticsBag {
     pub fn report_self_not_first_parameter(&mut self, span: &TextSpan) {
         self.report_error(format!("'self' must be the first parameter"), span.clone());
     }
+
+    pub fn report_invalid_callee(&mut self, span: &TextSpan) {
+        self.report_error(format!("Invalid callee"), span.clone());
+    }
+
+    pub fn report_invalid_assignment_target(&mut self, span: &TextSpan) {
+        self.report_error(format!("Invalid assignment target"), span.clone());
+    }
+
+    pub fn report_binary_operator_mismatch(&mut self, span: &TextSpan, lhs: &Type, rhs: &Type) {
+        self.report_error(format!("Binary operator '{}' not declared for types '{}' and '{}'", span.literal, lhs, rhs), span.clone());
+    }
+
+    pub fn report_unary_operator_mismatch(&mut self, span: &TextSpan, ty: &Type) {
+        self.report_error(format!("Unary operator '{}' not declared for type '{}'", span.literal, ty), span.clone());
+    }
+
+    pub fn report_invalid_function_modifier(&mut self, span: &TextSpan) {
+        self.report_error(format!("Invalid function modifier '{}'", span.literal), span.clone());
+    }
+
+    pub fn report_cannot_assign_to(&mut self, span: &TextSpan) {
+        self.report_error(format!("Cannot assign to '{}'", span.literal), span.clone());
+    }
+
+    pub fn report_cannot_deref(&mut self, span: &TextSpan) {
+        self.report_error(format!("Cannot dereference '{}'", span.literal), span.clone());
+    }
+    
+    pub fn report_invalid_character_literal(&mut self, span: &TextSpan) {
+        self.report_error(format!("Invalid character literal '{}'", span.literal), span.clone());
+    }
 }
 
 #[cfg(test)]

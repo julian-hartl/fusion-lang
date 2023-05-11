@@ -1,3 +1,4 @@
+use std::fmt::format;
 use termion::color;
 
 use crate::ast::*;
@@ -69,7 +70,7 @@ impl <'a> ASTPrinter<'a> {
     ) {
         self.add_text(":");
         self.add_whitespace();
-        self.add_type(&type_annotation.type_name.span.literal);
+        self.add_type(format!("{}", &type_annotation.ty).as_str());
     }
 
     fn add_string(&mut self, string: &str) {
@@ -93,51 +94,7 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.ast
     }
 
-    fn visit_class_statement(&mut self, class_statement: &ASTClassStatement, statement: &ASTStatement) {
-        self.add_padding();
-        self.add_keyword("class");
-        self.add_whitespace();
-        self.add_text(&class_statement.identifier.span.literal);
-        self.add_whitespace();
-        if let Some(constructor) = &class_statement.constructor {
-            self.add_text("(");
-            for (i, field) in constructor.fields.iter().enumerate() {
-                if i != 0 {
-                    self.add_text(",");
-                    self.add_whitespace();
-                }
-                self.add_text(&field.identifier.span.literal);
-                self.add_type_annotation(&field.type_annotation);
-            }
-            self.add_text(")");
-        }
-        self.add_text("{");
-        self.add_newline();
-        self.indent += 1;
-        for member in class_statement.body.members.iter() {
-            match member {
-                ASTClassMember::Field(field) => {
-                    self.add_padding();
-                    self.add_text(&field.identifier.span.literal);
-                    self.add_type_annotation(&field.type_annotation);
-                    self.add_text(";");
-                    self.add_newline();
-                }
-                ASTClassMember::Method(method) => {
-                    self.add_padding();
-                    let stmt = self.ast.query_stmt(&method.func_decl).into_func_decl();
-                    self.visit_func_decl_statement(
-                        &stmt,
-                    );
-                }
-                ASTClassMember::Invalid(_) => {}
-            }
-        }
-        self.indent -= 1;
-        self.add_padding();
-        self.add_text("}");
-        self.add_newline();
-    }
+
 
     fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement) {
         self.add_keyword("func");
@@ -171,7 +128,9 @@ impl ASTVisitor for ASTPrinter<'_> {
             self.add_whitespace();
         }
         if let Some(body) = &func_decl_statement.body {
-            self.visit_statement(body);
+            for statement in body {
+                self.visit_statement(statement);
+            }
         }
     }
     fn visit_return_statement(&mut self, return_statement: &ASTReturnStatement, stmt: &ASTStatement) {
@@ -228,7 +187,7 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.visit_expression(&let_statement.initializer);
     }
 
-    fn visit_statement(&mut self, statement: &ASTStmtId) {
+    fn visit_statement(&mut self, statement: &ASTStatement) {
         self.add_padding();
         Self::do_visit_statement(self, statement);
         self.result.push_str(&format!("{}\n",
@@ -236,15 +195,22 @@ impl ASTVisitor for ASTPrinter<'_> {
         ));
     }
 
-    fn visit_self_expression(&mut self, self_expression: &ASTSelfExpression, expr: &ASTExpression) {
-        self.add_keyword("self");
+    fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression) {
+        self.add_string("'");
+        self.add_string(&char_expression.value.to_string());
+        self.add_string("'");
     }
 
-    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression) {
-        self.visit_expression(&member_access_expression.object);
-        self.add_text(".");
-        self.add_text(&member_access_expression.target.span.literal);
+    fn visit_deref_expression(&mut self, deref_expression: &ASTDerefExpression) {
+        self.add_text("*");
+        self.visit_expression(&deref_expression.expr);
     }
+
+    fn visit_ref_expression(&mut self, ref_expression: &ASTRefExpression) {
+        self.add_text("&");
+        self.visit_expression(&ref_expression.expr);
+    }
+
 
     fn visit_string_expression(&mut self, string_expression: &ASTStringExpression, expr: &ASTExpression) {
         self.add_string("\"");
@@ -266,7 +232,7 @@ impl ASTVisitor for ASTPrinter<'_> {
     }
 
     fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression, expr: &ASTExpression) {
-        self.add_variable(assignment_expression.identifier.span.literal.as_str());
+        self.visit_expression(&assignment_expression.assignee);
         self.add_whitespace();
         self.add_text("=");
         self.add_whitespace();

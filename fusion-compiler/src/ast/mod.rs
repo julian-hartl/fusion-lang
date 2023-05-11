@@ -1,316 +1,122 @@
-use std::collections::HashMap;
-use std::fmt::format;
-use std::hash::Hash;
-
+use std::fmt::{Display, Formatter};
 use termion::color::{Fg, Reset};
 
 use printer::ASTPrinter;
 use visitor::ASTVisitor;
 
 use crate::ast::lexer::Token;
-use crate::ast::parser::Counter;
-use crate::compilation::symbols::function::FunctionSymbol;
-use crate::compilation::symbols::variable::VariableSymbol;
-use crate::compilation::symbols::class::ClassSymbol;
 use crate::text::span::TextSpan;
-use crate::typings::Type;
 
 pub mod lexer;
 pub mod parser;
-pub mod evaluator;
 pub mod visitor;
 pub mod printer;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub enum ASTNodeId {
-    Stmt(ASTStmtId),
-    Expr(ASTExprId),
-    Unknown,
-}
-
-impl From<ASTStmtId> for ASTNodeId {
-    fn from(id: ASTStmtId) -> Self {
-        ASTNodeId::Stmt(id)
-    }
-}
-
-impl From<&ASTStmtId> for ASTNodeId {
-    fn from(id: &ASTStmtId) -> Self {
-        Self::from(*id)
-    }
-}
-
-impl From<ASTExprId> for ASTNodeId {
-    fn from(id: ASTExprId) -> Self {
-        ASTNodeId::Expr(id)
-    }
-}
-
-impl From<&ASTExprId> for ASTNodeId {
-    fn from(id: &ASTExprId) -> Self {
-        Self::from(*id)
-    }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct ASTStmtId {
-    pub id: usize,
-}
-
-impl ASTStmtId {
-    pub fn new(id: usize) -> Self {
-        ASTStmtId { id }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct ASTExprId {
-    pub id: usize,
-}
-
-impl ASTExprId {
-    pub fn new(id: usize) -> Self {
-        ASTExprId { id }
-    }
-}
-
-pub struct ASTNode {
-    pub id: ASTNodeId,
-    pub span: TextSpan,
-}
-
-impl ASTNode {
-    pub fn new(id: ASTNodeId, span: TextSpan) -> Self {
-        Self { id, span }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ASTNodeIdGen {
-    pub next_stmt_id: Counter,
-    pub next_expr_id: Counter,
-}
-
-impl ASTNodeIdGen {
-    pub fn new() -> Self {
-        Self { next_stmt_id: Counter::new(), next_expr_id: Counter::new() }
-    }
-
-    pub fn next_stmt_id(&self) -> ASTStmtId {
-        let id = self.next_stmt_id.get_value();
-        self.next_stmt_id.increment();
-        ASTStmtId::new(id)
-    }
-
-    pub fn next_expr_id(&self) -> ASTExprId {
-        let id = self.next_expr_id.get_value();
-        self.next_expr_id.increment();
-        ASTExprId::new(id)
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Ast {
-    pub statements: HashMap<ASTStmtId, ASTStatement>,
-    pub expressions: HashMap<ASTExprId, ASTExpression>,
-    pub top_level_statements: Vec<ASTStmtId>,
-    pub node_id_gen: ASTNodeIdGen,
+    pub statements: Vec<ASTStatement>,
 }
 
 impl Ast {
     pub fn new() -> Self {
-        Self { statements: HashMap::new(), expressions: HashMap::new(), node_id_gen: ASTNodeIdGen::new(), top_level_statements: Vec::new() }
+        Self { statements: Vec::new() }
     }
 
-    pub fn query_expr(&self, expr_id: &ASTExprId) -> &ASTExpression {
-        &self.expressions[expr_id]
+
+    pub fn expression_statement(&mut self, expr: ASTExpression) -> ASTStatement {
+        ASTStatement::new(ASTStatementKind::Expression(
+            expr
+        ))
     }
 
-    pub fn query_stmt(&self, stmt_id: &ASTStmtId) -> &ASTStatement {
-        &self.statements[stmt_id]
+    pub fn let_statement(&mut self, identifier: Token, initializer: ASTExpression, type_annotation: Option<StaticTypeAnnotation>) -> ASTStatement {
+        ASTStatement::new(
+            ASTStatementKind::Let(ASTLetStatement { identifier, initializer, type_annotation }))
     }
 
-    pub fn span(&self, node_id: &ASTNodeId) -> TextSpan {
-        match node_id {
-            ASTNodeId::Stmt(stmt_id) => {
-                let stmt = self.query_stmt(stmt_id);
-                stmt.span(&self)
-            }
-            ASTNodeId::Expr(expr_id) => {
-                let expr = self.query_expr(expr_id);
-                expr.span(&self)
-            }
-            ASTNodeId::Unknown => panic!("Cannot get span for unknown node"),
-        }
+    pub fn if_statement(&mut self, if_keyword: Token, condition: ASTExpression, then: ASTStatement, else_statement: Option<ASTElseStatement>) -> ASTStatement {
+        ASTStatement::new(
+            ASTStatementKind::If(ASTIfStatement
+            {
+                if_keyword,
+                condition,
+                then_branch: Box::new(then),
+                else_branch: else_statement,
+            }))
     }
 
-    pub fn compute_node(&self, node_id: &ASTNodeId) -> Option<ASTNode> {
-        match node_id {
-            ASTNodeId::Stmt(stmt_id) => {
-                let stmt = self.query_stmt(stmt_id);
-                Some(ASTNode::new(*node_id, stmt.span(&self)))
-            }
-            ASTNodeId::Expr(expr_id) => {
-                let expr = self.query_expr(expr_id);
-                Some(ASTNode::new(*node_id, expr.span(&self)))
-            }
-            ASTNodeId::Unknown => None,
-        }
+    pub fn block_statement(&mut self, open_brace: Token, statements: Vec<ASTStatement>, close_brace: Token) -> ASTStatement {
+        ASTStatement::new(ASTStatementKind::Block(ASTBlockStatement { statements, open_brace, close_brace }))
     }
 
-    pub fn set_type(&mut self, expr_id: &ASTExprId, ty: Type) {
-        let expr = self.expressions.get_mut(expr_id).unwrap();
-        expr.ty = ty;
+    pub fn while_statement(&mut self, while_keyword: Token, condition: ASTExpression, body: ASTStatement) -> ASTStatement {
+        ASTStatement::new(ASTStatementKind::While(ASTWhileStatement { while_keyword, condition, body: Box::new(body) }))
     }
 
-    pub fn set_symbol_for_stmt(&mut self, stmt_id: &ASTStmtId, symbol: VariableSymbol) {
-        let stmt = self.statements.get_mut(stmt_id).unwrap();
-        match &mut stmt.kind {
-            ASTStatementKind::Let(let_stmt) => {
-                let_stmt.variable = Some(symbol);
-            }
-            _ => panic!("Cannot set symbol for non-let statement"),
-        }
+    pub fn return_statement(&mut self, return_keyword: Token, return_value: Option<ASTExpression>, is_top_level: bool) -> ASTStatement {
+        ASTStatement::new(ASTStatementKind::Return(ASTReturnStatement { return_keyword, return_value, is_top_level }))
     }
 
-    pub fn set_symbol_for_expr(&mut self, expr_id: &ASTExprId, symbol: VariableSymbol) {
-        let expr = self.expressions.get_mut(expr_id).unwrap();
-        match &mut expr.kind {
-            ASTExpressionKind::Identifier(expr) => {
-                match &expr.kind {
-                    ASTIdentifierKind::Variable(symbol) => {
-                        expr.kind = ASTIdentifierKind::Variable(symbol.clone());
-                    }
-                    _ => panic!("Cannot set symbol for non-variable identifier"),
-                }
-            }
-            ASTExpressionKind::Assignment(assignment) => {
-                assignment.variable = Some(symbol);
-            }
-            _ => panic!("Cannot set symbol for non-variable expression: {:?}", expr.kind),
-        }
+    pub fn func_decl_statement(&mut self, func_token: Token, modifier_tokens: Vec<Token>, identifier: Token, parameters: Vec<FuncDeclParameter>, body: Option<Vec<ASTStatement>>, return_type: Option<ASTFunctionReturnType>) -> ASTStatement {
+        ASTStatement::new(ASTStatementKind::FuncDecl(ASTFuncDeclStatement { identifier, parameters, body, return_type, modifier_tokens, func_token }))
     }
 
-    pub fn set_identifier_kind(&mut self, expr_id: &ASTExprId, kind: ASTIdentifierKind) {
-        let expr = self.expressions.get_mut(expr_id).unwrap();
-        match &mut expr.kind {
-            ASTExpressionKind::Identifier(expr) => {
-                expr.kind = kind;
-            }
-            _ => panic!("Cannot set identifier kind for non-identifier expression"),
-        }
+
+    pub fn number_expression(&mut self, token: Token, number: i64) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Number(ASTNumberExpression { number, token }))
     }
 
-    pub fn set_top_level_on_return(&mut self, stmt_id: &ASTStmtId, is_top_level: bool) {
-        let stmt = self.statements.get_mut(stmt_id).unwrap();
-        match &mut stmt.kind {
-            ASTStatementKind::Return(ret) => {
-                ret.is_top_level = is_top_level;
-            }
-            _ => panic!("Cannot set top level on non-return expression"),
-        }
+    pub fn string_expression(&mut self, open_quote: Token, value: ASTString, close_quote: Token) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::String(ASTStringExpression { open_quote, close_quote, string: value }))
     }
 
-    pub fn mark_top_level_statement(&mut self, stmt_id: ASTStmtId) {
-        self.top_level_statements.push(stmt_id);
+    pub fn binary_expression(&mut self, operator: ASTBinaryOperator, left: ASTExpression, right: ASTExpression) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Binary(ASTBinaryExpression { operator, left: Box::new(left), right: Box::new(right) }))
     }
 
-    fn stmt_from_kind(&mut self, kind: ASTStatementKind) -> &ASTStatement {
-        let stmt = ASTStatement::new(kind, self.node_id_gen.next_stmt_id());
-        let id = stmt.id;
-        self.statements.insert(id, stmt);
-        &self.statements[&id]
+    pub fn parenthesized_expression(&mut self, left_paren: Token, expression: ASTExpression, right_paren: Token) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Parenthesized(ASTParenthesizedExpression { expression: Box::new(expression), left_paren, right_paren }))
     }
 
-    pub fn expression_statement(&mut self, expr_id: ASTExprId) -> &ASTStatement {
-        self.stmt_from_kind(ASTStatementKind::Expression(expr_id))
+    pub fn identifier_expression(&mut self, identifier: Token) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Identifier(ASTIdentifierExpression { identifier }))
     }
 
-    pub fn let_statement(&mut self, identifier: Token, initializer: ASTExprId, type_annotation: Option<StaticTypeAnnotation>, variable: Option<VariableSymbol>) -> &ASTStatement {
-        self.stmt_from_kind(ASTStatementKind::Let(ASTLetStatement { identifier, initializer, type_annotation, variable }))
+    pub fn unary_expression(&mut self, operator: ASTUnaryOperator, operand: ASTExpression) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Unary(ASTUnaryExpression { operator, operand: Box::new(operand) }))
     }
 
-    pub fn if_statement(&mut self, if_keyword: Token, condition: ASTExprId, then: ASTStmtId, else_statement: Option<ASTElseStatement>) -> &ASTStatement {
-        self.stmt_from_kind(ASTStatementKind::If(ASTIfStatement { if_keyword, condition, then_branch: then, else_branch: else_statement }))
+    pub fn assignment_expression(&mut self, assignee: ASTExpression, equals: Token, expression: ASTExpression) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Assignment(ASTAssignmentExpression { assignee: Box::new(assignee), expression: Box::new(expression), equals }))
     }
 
-    pub fn block_statement(&mut self, open_brace: Token, statements: Vec<ASTStmtId>, close_brace: Token) -> &ASTStatement {
-        self.stmt_from_kind(ASTStatementKind::Block(ASTBlockStatement { statements, open_brace, close_brace }))
+    pub fn boolean_expression(&mut self, token: Token, value: bool) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Boolean(ASTBooleanExpression { token, value }))
     }
 
-    pub fn while_statement(&mut self, while_keyword: Token, condition: ASTExprId, body: ASTStmtId) -> &ASTStatement {
-        self.stmt_from_kind(ASTStatementKind::While(ASTWhileStatement { while_keyword, condition, body }))
+    pub fn call_expression(&mut self, callee: ASTExpression, left_paren: Token, arguments: Vec<ASTExpression>, right_paren: Token) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Call(ASTCallExpression { callee: Box::new(callee), arguments, left_paren, right_paren }))
     }
 
-    pub fn return_statement(&mut self, return_keyword: Token, return_value: Option<ASTExprId>, is_top_level: bool) -> &ASTStatement {
-        self.stmt_from_kind(ASTStatementKind::Return(ASTReturnStatement { return_keyword, return_value, is_top_level }))
+    pub fn ref_expression(&mut self, ampersand: Token, expression: ASTExpression) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Ref(ASTRefExpression { ampersand, expr: Box::new(expression) }))
     }
 
-    pub fn func_decl_statement(&mut self, func_token: Token, modifier_tokens: Vec<Token>, identifier: Token, parameters: Vec<FuncDeclParameter>, body: Option<ASTStmtId>, return_type: Option<ASTFunctionReturnType>) -> &ASTStatement {
-        self.stmt_from_kind(ASTStatementKind::FuncDecl(ASTFuncDeclStatement { identifier, parameters, body, return_type, modifier_tokens, func_token }))
+    pub fn deref_expression(&mut self, star: Token, expression: ASTExpression) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Deref(ASTDerefExpression { star, expr: Box::new(expression) }))
     }
 
-    pub fn class_statement(&mut self, class_token: Token, identifier: Token, constructor: Option<ASTClassConstructor>, body: ASTClassBody) -> &ASTStatement {
-        self.stmt_from_kind(ASTStatementKind::Class(ASTClassStatement { class_keyword: class_token, identifier, constructor, body }))
+    pub fn character_expression(&mut self, open_quote: Token, value: char, close_quote: Token) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Char(ASTCharExpression { open_quote, value, close_quote }))
     }
 
-    fn expr_from_kind(&mut self, kind: ASTExpressionKind) -> &ASTExpression {
-        let expr = ASTExpression::new(kind, self.node_id_gen.next_expr_id(), Type::Unresolved);
-        let expr_id = expr.id;
-        self.expressions.insert(expr_id, expr);
-        &self.expressions[&expr_id]
-    }
-
-    pub fn number_expression(&mut self, token: Token, number: i64) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Number(ASTNumberExpression { number, token }))
-    }
-
-    pub fn string_expression(&mut self, open_quote: Token, value: ASTString, close_quote: Token) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::String(ASTStringExpression { open_quote, close_quote, string: value }))
-    }
-
-    pub fn binary_expression(&mut self, operator: ASTBinaryOperator, left: ASTExprId, right: ASTExprId) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Binary(ASTBinaryExpression { operator, left, right }))
-    }
-
-    pub fn parenthesized_expression(&mut self, left_paren: Token, expression: ASTExprId, right_paren: Token) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Parenthesized(ASTParenthesizedExpression { expression, left_paren, right_paren }))
-    }
-
-    pub fn identifier_expression(&mut self, identifier: Token) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Identifier(ASTIdentifierExpression { identifier,kind: ASTIdentifierKind::Unknown }))
-    }
-
-    pub fn unary_expression(&mut self, operator: ASTUnaryOperator, operand: ASTExprId) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Unary(ASTUnaryExpression { operator, operand }))
-    }
-
-    pub fn assignment_expression(&mut self, identifier: Token, equals: Token, expression: ASTExprId, variable: Option<VariableSymbol>) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Assignment(ASTAssignmentExpression { identifier, expression, equals, variable }))
-    }
-
-    pub fn boolean_expression(&mut self, token: Token, value: bool) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Boolean(ASTBooleanExpression { token, value }))
-    }
-
-    pub fn call_expression(&mut self, callee: ASTExprId, left_paren: Token, arguments: Vec<ASTExprId>, right_paren: Token) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Call(ASTCallExpression { callee, arguments, left_paren, right_paren }))
-    }
-
-    pub fn member_expression(&mut self, object: ASTExprId, dot: Token, property: Token) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::MemberAccess(ASTMemberAccessExpression { object, dot, target: property }))
-    }
-
-    pub fn self_expression(&mut self, token: Token) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Self_(ASTSelfExpression { self_keyword: token }))
-    }
-
-    pub fn error_expression(&mut self, span: TextSpan) -> &ASTExpression {
-        self.expr_from_kind(ASTExpressionKind::Error(span))
+    pub fn error_expression(&mut self, span: TextSpan) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Error(span))
     }
 
     pub fn visit(&self, visitor: &mut dyn ASTVisitor) {
-        for statement in &self.top_level_statements {
+        for statement in &self.statements {
             visitor.visit_statement(statement);
         }
     }
@@ -326,71 +132,54 @@ impl Ast {
 
 #[derive(Debug, Clone)]
 pub enum ASTStatementKind {
-    Expression(ASTExprId),
+    Expression(ASTExpression),
     Let(ASTLetStatement),
     If(ASTIfStatement),
     Block(ASTBlockStatement),
     While(ASTWhileStatement),
     FuncDecl(ASTFuncDeclStatement),
     Return(ASTReturnStatement),
-    Class(ASTClassStatement),
 }
 
-
-#[derive(Debug, Clone)]
-pub struct ASTClassStatement {
-    pub class_keyword: Token,
-    pub identifier: Token,
-    pub constructor: Option<ASTClassConstructor>,
-    pub body: ASTClassBody,
-}
-
-#[derive(Debug, Clone)]
-pub struct ASTClassConstructor {
-    pub fields: Vec<ASTClassField>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ASTClassBody {
-    pub open_brace: Token,
-    pub members: Vec<ASTClassMember>,
-    pub close_brace: Token,
-}
-
-#[derive(Debug, Clone)]
-pub enum ASTClassMember {
-    Field(ASTClassField),
-    Method(ASTClassMethod),
-    Invalid(ASTStmtId),
-}
-
-#[derive(Debug, Clone)]
-pub struct ASTClassField {
-    pub identifier: Token,
-    pub type_annotation: StaticTypeAnnotation,
-}
-
-#[derive(Debug, Clone)]
-pub struct ASTClassMethod {
-    pub func_decl: ASTStmtId,
-}
 
 #[derive(Debug, Clone)]
 pub struct ASTReturnStatement {
     pub return_keyword: Token,
-    pub return_value: Option<ASTExprId>,
+    pub return_value: Option<ASTExpression>,
     pub is_top_level: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct StaticTypeAnnotation {
     pub colon: Token,
-    pub type_name: Token,
+    pub ty: TypeSyntax,
+}
+#[derive(Debug, Clone)]
+
+pub struct TypeSyntax {
+    pub name: Token,
+    pub star: Option<Token>,
+}
+
+impl TypeSyntax {
+    pub fn new(name: Token, star: Option<Token>) -> Self {
+        Self { name, star }
+    }
+}
+
+impl Display for TypeSyntax {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Some(star) = &self.star {
+            write!(f, "*{}", self.name.span.literal)
+        } else {
+            write!(f, "{}", self.name.span.literal)
+        }
+    }
 }
 
 impl StaticTypeAnnotation {
-    pub fn new(colon: Token, type_name: Token) -> Self {
-        Self { colon, type_name }
+    pub fn new(colon: Token, ty: TypeSyntax) -> Self {
+        Self { colon, ty }
     }
 }
 
@@ -411,12 +200,12 @@ pub struct NormalFuncDeclParameter {
 #[derive(Debug, Clone)]
 pub struct ASTFunctionReturnType {
     pub arrow: Token,
-    pub type_name: Token,
+    pub ty: TypeSyntax,
 }
 
 impl ASTFunctionReturnType {
-    pub fn new(arrow: Token, type_name: Token) -> Self {
-        Self { arrow, type_name }
+    pub fn new(arrow: Token, ty: TypeSyntax) -> Self {
+        Self { arrow, ty: ty }
     }
 }
 
@@ -426,61 +215,59 @@ pub struct ASTFuncDeclStatement {
     pub modifier_tokens: Vec<Token>,
     pub identifier: Token,
     pub parameters: Vec<FuncDeclParameter>,
-    pub body: Option<ASTStmtId>,
+    pub body: Option<Vec<ASTStatement>>,
     pub return_type: Option<ASTFunctionReturnType>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ASTWhileStatement {
     pub while_keyword: Token,
-    pub condition: ASTExprId,
-    pub body: ASTStmtId,
+    pub condition: ASTExpression,
+    pub body: Box<ASTStatement>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ASTBlockStatement {
     pub open_brace: Token,
-    pub statements: Vec<ASTStmtId>,
+    pub statements: Vec<ASTStatement>,
     pub close_brace: Token,
 }
 
 #[derive(Debug, Clone)]
 pub struct ASTElseStatement {
     pub else_keyword: Token,
-    pub else_statement: ASTStmtId,
+    pub else_statement: Box<ASTStatement>,
 }
 
 impl ASTElseStatement {
-    pub fn new(else_keyword: Token, else_statement: ASTStmtId) -> Self {
-        ASTElseStatement { else_keyword, else_statement }
+    pub fn new(else_keyword: Token, else_statement: ASTStatement) -> Self {
+        ASTElseStatement { else_keyword, else_statement: Box::new(else_statement) }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ASTIfStatement {
     pub if_keyword: Token,
-    pub condition: ASTExprId,
-    pub then_branch: ASTStmtId,
+    pub condition: ASTExpression,
+    pub then_branch: Box<ASTStatement>,
     pub else_branch: Option<ASTElseStatement>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ASTLetStatement {
     pub identifier: Token,
-    pub initializer: ASTExprId,
+    pub initializer: ASTExpression,
     pub type_annotation: Option<StaticTypeAnnotation>,
-    pub variable: Option<VariableSymbol>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ASTStatement {
     pub kind: ASTStatementKind,
-    pub id: ASTStmtId,
 }
 
 impl ASTStatement {
-    pub fn new(kind: ASTStatementKind, id: ASTStmtId) -> Self {
-        ASTStatement { kind, id }
+    pub fn new(kind: ASTStatementKind) -> Self {
+        ASTStatement { kind }
     }
 
     pub fn into_func_decl(&self) -> &ASTFuncDeclStatement {
@@ -497,40 +284,38 @@ impl ASTStatement {
         }
     }
 
-    pub fn span(&self, ast: &Ast) -> TextSpan {
+    pub fn span(&self) -> TextSpan {
         match &self.kind
         {
-            ASTStatementKind::Expression(expr) => ast.query_expr(expr).span(ast),
+            ASTStatementKind::Expression(expr) => expr.span(),
             ASTStatementKind::Let(stmt) => {
-                let init_span = ast.query_expr(&stmt.initializer).span(ast);
+                let init_span = &stmt.initializer.span();
                 let mut spans = vec![
                     &stmt.identifier.span,
                     &init_span,
                 ];
                 if let Some(type_annotation) = &stmt.type_annotation {
                     spans.push(&type_annotation.colon.span);
-                    spans.push(&type_annotation.type_name.span);
+                    spans.push(&type_annotation.ty.name.span);
                 }
                 TextSpan::merge(
                     spans
                 )
             }
             ASTStatementKind::If(stmt) => {
-                let cond_span = ast.query_expr(&stmt.condition).span(ast);
-                let then_branch_span = ast.query_stmt(&stmt.then_branch).span(ast);
+                let cond_span = stmt.condition.span();
+                let then_branch_span = stmt.then_branch.span();
                 let mut spans = vec![
                     &stmt.if_keyword.span,
                     &cond_span,
                     &then_branch_span,
                 ];
 
-                let else_spans = stmt.else_branch.as_ref().map(|else_branch| {
-                    (&else_branch.else_keyword.span, ast.query_stmt(&else_branch.else_statement).span(ast).clone())
-                });
-
-                if let Some((else_keyword_span, else_branch_span)) = else_spans.as_ref() {
-                    spans.push(else_keyword_span);
-                    spans.push(&else_branch_span);
+                if let Some(else_branch) = &stmt.else_branch {
+                    spans.push(&else_branch.else_keyword.span);
+                    let span1 = else_branch.else_statement.span();
+                    // todo: fix this
+                    // spans.push(&span1);
                 }
                 TextSpan::merge(
                     spans
@@ -542,14 +327,14 @@ impl ASTStatement {
                     stmt.close_brace.span.clone(),
                 ];
                 spans.extend(
-                    stmt.statements.iter().map(|stmt| ast.query_stmt(stmt).span(ast)));
+                    stmt.statements.iter().map(|stmt| stmt.span()));
                 TextSpan::merge(
                     spans.iter().map(|span| span).collect()
                 )
             }
             ASTStatementKind::While(stmt) => {
-                let cond_span = ast.query_expr(&stmt.condition).span(ast);
-                let body_span = ast.query_stmt(&stmt.body).span(ast);
+                let cond_span = stmt.condition.span();
+                let body_span = stmt.body.span();
                 let spans = vec![
                     &stmt.while_keyword.span,
                     &cond_span,
@@ -568,7 +353,7 @@ impl ASTStatement {
                         FuncDeclParameter::Normal(parameter) => {
                             spans.push(&parameter.identifier.span);
                             spans.push(&parameter.type_annotation.colon.span);
-                            spans.push(&parameter.type_annotation.type_name.span);
+                            spans.push(&parameter.type_annotation.ty.name.span);
                         }
                         FuncDeclParameter::Self_(token) => {
                             spans.push(&token.span);
@@ -577,11 +362,13 @@ impl ASTStatement {
                 }
                 if let Some(return_type) = &stmt.return_type {
                     spans.push(&return_type.arrow.span);
-                    spans.push(&return_type.type_name.span);
+                    spans.push(&return_type.ty.name.span);
                 }
-                let body_span = stmt.body.as_ref().map(|body| ast.query_stmt(body).span(ast));
-                if let Some(body_span) = body_span.as_ref() {
-                    spans.push(body_span);
+                let body_spans = stmt.body.as_ref().map(|body| {
+                    body.iter().map(|stmt| stmt.span()).collect::<Vec<_>>()
+                });
+                if let Some(body_span) = body_spans.as_ref() {
+                    spans.extend(body_span);
                 }
                 TextSpan::merge(
                     spans
@@ -591,7 +378,7 @@ impl ASTStatement {
                 let mut spans = vec![
                     &stmt.return_keyword.span,
                 ];
-                let return_value_span = stmt.return_value.as_ref().map(|return_value| ast.query_expr(&return_value).span(ast));
+                let return_value_span = stmt.return_value.as_ref().map(|return_value| return_value.span());
                 if let Some(return_value_span) = return_value_span.as_ref() {
                     spans.push(return_value_span);
                 }
@@ -599,19 +386,7 @@ impl ASTStatement {
                     spans
                 )
             }
-            ASTStatementKind::Class(stmt) => {
-                let spans = vec![
-                    &stmt.class_keyword.span,
-                    &stmt.identifier.span,
-                ];
-                // todo:
-                // for member in &stmt.body.members {
-                //     spans.push(ast.query_stmt(mem).span(ast));
-                // }
-                TextSpan::merge(
-                    spans
-                )
-            }
+
         }
     }
 }
@@ -623,6 +398,9 @@ pub enum ASTExpressionKind {
     ),
     String(
         ASTStringExpression
+    ),
+    Char(
+        ASTCharExpression
     ),
     Binary(
         ASTBinaryExpression
@@ -646,26 +424,36 @@ pub enum ASTExpressionKind {
     Call(
         ASTCallExpression
     ),
-    MemberAccess(
-        ASTMemberAccessExpression
+    Ref(
+        ASTRefExpression
     ),
-    Self_(ASTSelfExpression),
+    Deref(
+        ASTDerefExpression
+    ),
     Error(
         TextSpan
     ),
 }
 
 #[derive(Debug, Clone)]
-pub struct ASTSelfExpression {
-    pub self_keyword: Token,
+pub struct ASTCharExpression {
+    pub open_quote: Token,
+    pub value: char,
+    pub close_quote: Token,
 }
 
 #[derive(Debug, Clone)]
-pub struct ASTMemberAccessExpression {
-    pub object: ASTExprId,
-    pub dot: Token,
-    pub target: Token,
+pub struct ASTRefExpression {
+    pub ampersand: Token,
+    pub expr: Box<ASTExpression>,
 }
+
+#[derive(Debug, Clone)]
+pub struct ASTDerefExpression {
+    pub star: Token,
+    pub expr: Box<ASTExpression>,
+}
+
 
 #[derive(Debug, Clone)]
 pub struct ASTStringExpression {
@@ -712,7 +500,7 @@ impl ASTString {
 #[derive(Debug, Clone)]
 pub enum StringPart {
     Literal(String),
-    // Expression(ASTExprId),
+    // Expression(ASTExpression),
     EscapeSequence(EscapedCharacter),
 }
 
@@ -761,9 +549,9 @@ impl EscapedCharacter {
 
 #[derive(Debug, Clone)]
 pub struct ASTCallExpression {
-    pub callee: ASTExprId,
+    pub callee: Box<ASTExpression>,
     pub left_paren: Token,
-    pub arguments: Vec<ASTExprId>,
+    pub arguments: Vec<ASTExpression>,
     pub right_paren: Token,
 }
 
@@ -775,10 +563,9 @@ pub struct ASTBooleanExpression {
 
 #[derive(Debug, Clone)]
 pub struct ASTAssignmentExpression {
-    pub identifier: Token,
+    pub assignee: Box<ASTExpression>,
     pub equals: Token,
-    pub expression: ASTExprId,
-    pub variable: Option<VariableSymbol>,
+    pub expression: Box<ASTExpression>,
 }
 
 #[derive(Debug, Clone)]
@@ -802,22 +589,14 @@ impl ASTUnaryOperator {
 #[derive(Debug, Clone)]
 pub struct ASTUnaryExpression {
     pub operator: ASTUnaryOperator,
-    pub operand: ASTExprId,
+    pub operand: Box<ASTExpression>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ASTIdentifierExpression {
     pub identifier: Token,
-    pub kind: ASTIdentifierKind,
 }
 
-#[derive(Debug, Clone)]
-pub enum ASTIdentifierKind {
-    Variable(VariableSymbol),
-    Function(FunctionSymbol),
-    Class(ClassSymbol),
-    Unknown,
-}
 
 impl ASTIdentifierExpression {
     pub fn identifier(&self) -> &str {
@@ -834,6 +613,7 @@ pub enum ASTBinaryOperatorKind {
     Multiply,
     Divide,
     Power,
+    Modulo,
     // Bitwise
     BitwiseAnd,
     BitwiseOr,
@@ -863,6 +643,7 @@ impl ASTBinaryOperator {
             ASTBinaryOperatorKind::Power => 20,
             ASTBinaryOperatorKind::Multiply => 19,
             ASTBinaryOperatorKind::Divide => 19,
+            ASTBinaryOperatorKind::Modulo => 19,
             ASTBinaryOperatorKind::Plus => 18,
             ASTBinaryOperatorKind::Minus => 18,
             ASTBinaryOperatorKind::BitwiseAnd => 17,
@@ -880,9 +661,9 @@ impl ASTBinaryOperator {
 
 #[derive(Debug, Clone)]
 pub struct ASTBinaryExpression {
-    pub left: ASTExprId,
+    pub left: Box<ASTExpression>,
     pub operator: ASTBinaryOperator,
-    pub right: ASTExprId,
+    pub right: Box<ASTExpression>,
 }
 
 #[derive(Debug, Clone)]
@@ -894,56 +675,54 @@ pub struct ASTNumberExpression {
 #[derive(Debug, Clone)]
 pub struct ASTParenthesizedExpression {
     pub left_paren: Token,
-    pub expression: ASTExprId,
+    pub expression: Box<ASTExpression>,
     pub right_paren: Token,
 }
 
 #[derive(Debug, Clone)]
 pub struct ASTExpression {
     pub kind: ASTExpressionKind,
-    pub id: ASTExprId,
-    pub ty: Type,
 }
 
 impl ASTExpression {
-    pub fn new(kind: ASTExpressionKind, id: ASTExprId, ty: Type) -> Self {
-        ASTExpression { kind, id, ty }
+    pub fn new(kind: ASTExpressionKind) -> Self {
+        ASTExpression { kind}
     }
 
-    pub fn span(&self, ast: &Ast) -> TextSpan {
+    pub fn span(&self) -> TextSpan {
         match &self.kind {
             ASTExpressionKind::Number(expr) => expr.token.span.clone(),
             ASTExpressionKind::Binary(expr) => {
-                let left = &ast.query_expr(&expr.left).span(ast);
+                let left = &expr.left.span();
                 let operator = &expr.operator.token.span;
-                let right = &ast.query_expr(&expr.right).span(ast);
+                let right = &expr.right.span();
                 TextSpan::merge(vec![left, operator, right])
             }
             ASTExpressionKind::Unary(expr) => {
                 let operator = &expr.operator.token.span;
-                let operand = &ast.query_expr(&expr.operand).span(ast);
+                let operand = &expr.operand.span();
                 TextSpan::merge(vec![operator, operand])
             }
             ASTExpressionKind::Parenthesized(expr) => {
                 let open_paren = &expr.left_paren.span;
-                let expression = &ast.query_expr(&expr.expression).span(ast);
+                let expression = &expr.expression.span();
                 let close_paren = &expr.right_paren.span;
                 TextSpan::merge(vec![open_paren, expression, close_paren])
             }
             ASTExpressionKind::Identifier(expr) => expr.identifier.span.clone(),
             ASTExpressionKind::Assignment(expr) => {
-                let identifier = &expr.identifier.span;
+                let identifier = &expr.assignee.span();
                 let equals = &expr.equals.span;
-                let expression = &ast.query_expr(&expr.expression).span(ast);
+                let expression = &expr.expression.span();
                 TextSpan::merge(vec![identifier, equals, expression])
             }
             ASTExpressionKind::Boolean(expr) => expr.token.span.clone(),
             ASTExpressionKind::Call(expr) => {
-                let expr_span = &ast.query_expr(&expr.callee).span(ast);
+                let expr_span = &expr.callee.span();
                 let left_paren = &expr.left_paren.span;
                 let right_paren = &expr.right_paren.span;
                 let mut spans = vec![expr_span, left_paren, right_paren];
-                let argument_spans: Vec<TextSpan> = expr.arguments.iter().map(|arg| ast.query_expr(arg).span(ast)).collect();
+                let argument_spans: Vec<TextSpan> = expr.arguments.iter().map(|arg| arg.span()).collect();
                 for span in &argument_spans {
                     spans.push(span);
                 }
@@ -954,13 +733,20 @@ impl ASTExpression {
                 let spans = vec![&expr.open_quote.span, &expr.close_quote.span];
                 TextSpan::merge(spans)
             }
-            ASTExpressionKind::MemberAccess(expr) => {
-                let expr_span = &ast.query_expr(&expr.object).span(ast);
-                let dot = &expr.dot.span;
-                let target = &expr.target.span;
-                TextSpan::merge(vec![expr_span, dot, target])
+            ASTExpressionKind::Ref(expr) => {
+                let span1 = expr.expr.span();
+                let spans = vec![&expr.ampersand.span, &span1];
+                TextSpan::merge(spans)
             }
-            ASTExpressionKind::Self_(expr) => expr.self_keyword.span.clone(),
+            ASTExpressionKind::Deref(expr) => {
+                let span2 = expr.expr.span();
+                let spans = vec![&expr.star.span, &span2];
+                TextSpan::merge(spans)
+            }
+            ASTExpressionKind::Char(expr) => {
+                let spans = vec![&expr.open_quote.span, &expr.close_quote.span];
+                TextSpan::merge(spans)
+            }
         }
     }
 }

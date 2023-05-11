@@ -1,4 +1,4 @@
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTClassMember, ASTClassStatement, ASTExpression, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTMemberAccessExpression, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTSelfExpression, ASTStatement, ASTStmtId, ASTStringExpression, ASTUnaryExpression, ASTWhileStatement, FuncDeclParameter};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStringExpression, ASTUnaryExpression, ASTWhileStatement, FuncDeclParameter};
 use crate::ast::visitor::ASTVisitor;
 use crate::text::span::TextSpan;
 
@@ -34,9 +34,21 @@ impl<'a> Formatter<'a> {
         self.write(&format!("{}", " ".repeat(self.indent)));
     }
 
+    fn indent(&mut self) {
+        self.indent += 4;
+    }
+
+    fn dedent(&mut self) {
+        self.indent -= 4;
+    }
+
     pub fn format(mut self) -> String {
         self.ast.visit(&mut self);
         self.buffer
+    }
+
+    fn visit_statement_no_indent(&mut self, statement: &ASTStatement) {
+        self.do_visit_statement(&statement);
     }
 }
 
@@ -45,58 +57,7 @@ impl ASTVisitor for Formatter<'_> {
         self.ast
     }
 
-    fn visit_class_statement(&mut self, class_statement: &ASTClassStatement, statement: &ASTStatement) {
-        self.write_indent();
-        self.write("class");
-        self.whitespace();
-        self.write(&class_statement.identifier.span.literal);
-        self.whitespace();
-        if let Some(constructor) = &class_statement.constructor {
-            for (i, parameter) in constructor.fields.iter().enumerate() {
-                if i == 0 {
-                    self.write("(");
-                }
-                self.write(&parameter.identifier.span.literal);
-                self.write(":");
-                self.whitespace();
-                self.write(&parameter.type_annotation.type_name.span.literal);
-                if i < constructor.fields.len() - 1 {
-                    self.write(",");
-                    self.whitespace();
-                } else {
-                    self.write(")");
-                }
-            }
-            self.whitespace();
-        }
 
-        self.write("{");
-        self.new_line();
-        self.indent += 4;
-        for member in &class_statement.body.members {
-            match member {
-                ASTClassMember::Field(field) => {
-                    self.write_indent();
-                    self.write(&field.identifier.span.literal);
-                    self.write(":");
-                    self.whitespace();
-                    self.write(&field.type_annotation.type_name.span.literal);
-                    self.write(";");
-                    self.new_line();
-                }
-                ASTClassMember::Method(method) => {
-                    self.write_indent();
-                    let func = self.ast.query_stmt(&method.func_decl).into_func_decl();
-                    self.visit_func_decl_statement(&func);
-                }
-                ASTClassMember::Invalid(_) => {}
-            }
-        }
-        self.indent -= 4;
-        self.write_indent();
-        self.write("}");
-        self.new_line();
-    }
 
     fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement) {
         self.write("func");
@@ -115,7 +76,7 @@ impl ASTVisitor for Formatter<'_> {
                     self.write(&parameter.identifier.span.literal);
                     self.write(":");
                     self.whitespace();
-                    self.write(&parameter.type_annotation.type_name.span.literal);
+                    self.write(format!("{}", &parameter.type_annotation.ty).as_str());
                 }
                 FuncDeclParameter::Self_(_) => {
                     self.write("self");
@@ -133,11 +94,19 @@ impl ASTVisitor for Formatter<'_> {
         if let Some(return_type) = &func_decl_statement.return_type {
             self.write("->");
             self.whitespace();
-            self.write(&return_type.type_name.span.literal);
+            self.write(format!("{}", &return_type.ty).as_str());
             self.whitespace();
         }
         if let Some(body) = &func_decl_statement.body {
-            self.visit_statement(body);
+            self.write("{");
+            self.new_line();
+            self.indent();
+            for statement in body {
+                self.visit_statement(statement);
+            }
+            self.dedent();
+            self.write_indent();
+            self.write("}");
         }
     }
 
@@ -154,18 +123,17 @@ impl ASTVisitor for Formatter<'_> {
         self.whitespace();
         self.visit_expression(&while_statement.condition);
         self.whitespace();
-        self.visit_statement(&while_statement.body);
+        self.visit_statement_no_indent(&while_statement.body);
     }
 
     fn visit_block_statement(&mut self, block_statement: &ASTBlockStatement) {
         self.write("{");
         self.new_line();
-        self.indent += 4;
+        self.indent();
         for statement in &block_statement.statements {
-            self.write_indent();
             self.visit_statement(statement);
         }
-        self.indent -= 4;
+        self.dedent();
         self.write_indent();
         self.write("}");
     }
@@ -175,12 +143,12 @@ impl ASTVisitor for Formatter<'_> {
         self.whitespace();
         self.visit_expression(&if_statement.condition);
         self.whitespace();
-        self.visit_statement(&if_statement.then_branch);
+        self.visit_statement_no_indent(&if_statement.then_branch);
         if let Some(else_statement) = &if_statement.else_branch {
             self.whitespace();
             self.write("else");
             self.whitespace();
-            self.visit_statement(&else_statement.else_statement);
+            self.visit_statement_no_indent(&else_statement.else_statement);
         }
     }
 
@@ -194,19 +162,26 @@ impl ASTVisitor for Formatter<'_> {
         self.visit_expression(&let_statement.initializer);
     }
 
-    fn visit_statement(&mut self, statement: &ASTStmtId) {
+    fn visit_statement(&mut self, statement: &ASTStatement) {
+        self.write_indent();
         self.do_visit_statement(statement);
         self.new_line();
     }
 
-    fn visit_self_expression(&mut self, self_expression: &ASTSelfExpression, expr: &ASTExpression) {
-        self.write("self");
+    fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression) {
+        self.write("'");
+        self.write(&char_expression.value.to_string());
+        self.write("'");
     }
 
-    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression) {
-        self.visit_expression(&member_access_expression.object);
-        self.write(".");
-        self.write(&member_access_expression.target.span.literal);
+    fn visit_deref_expression(&mut self, deref_expression: &ASTDerefExpression) {
+        self.write("*");
+        self.visit_expression(&deref_expression.expr);
+    }
+
+    fn visit_ref_expression(&mut self, ref_expression: &ASTRefExpression) {
+        self.write("&");
+        self.visit_expression(&ref_expression.expr);
     }
 
     fn visit_string_expression(&mut self, string_expression: &ASTStringExpression, expr: &ASTExpression) {
@@ -229,7 +204,7 @@ impl ASTVisitor for Formatter<'_> {
     }
 
     fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression, expr: &ASTExpression) {
-        self.write(&assignment_expression.identifier.span.literal);
+        self.visit_expression(&assignment_expression.assignee);
         self.whitespace();
         self.write("=");
         self.whitespace();

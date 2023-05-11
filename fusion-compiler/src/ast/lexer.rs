@@ -14,6 +14,7 @@ pub enum TokenKind {
     Asterisk,
     Slash,
     Equals,
+    Percent,
     Ampersand,
     Pipe,
     Caret,
@@ -32,15 +33,11 @@ pub enum TokenKind {
     True,
     False,
     While,
-    External,
+    Extern,
     Func,
     Return,
     Class,
     Self_,
-    I64,
-    Bool,
-    Str,
-    Void,
     // Separators
     LeftParen,
     RightParen,
@@ -49,7 +46,8 @@ pub enum TokenKind {
     Comma,
     Colon,
     Arrow,
-    Quote,
+    DoubleQuote,
+    SingleQuote,
     Dot,
     // Other
     Bad,
@@ -63,23 +61,24 @@ impl Display for TokenKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             TokenKind::Number(_) => write!(f, "Number"),
-            TokenKind::Plus => write!(f, "+"),
-            TokenKind::Minus => write!(f, "-"),
-            TokenKind::Asterisk => write!(f, "*"),
-            TokenKind::Slash => write!(f, "/"),
-            TokenKind::LeftParen => write!(f, "("),
-            TokenKind::RightParen => write!(f, ")"),
+            TokenKind::Plus => write!(f, "Plus"),
+            TokenKind::Minus => write!(f, "Minus"),
+            TokenKind::Asterisk => write!(f, "Asterisk"),
+            TokenKind::Percent => write!(f, "Percent"),
+            TokenKind::Slash => write!(f, "Slash"),
+            TokenKind::LeftParen => write!(f, "LeftParen"),
+            TokenKind::RightParen => write!(f, "RightParen"),
             TokenKind::Bad => write!(f, "Bad"),
             TokenKind::Whitespace => write!(f, "Whitespace"),
             TokenKind::Eof => write!(f, "Eof"),
             TokenKind::Let => write!(f, "Let"),
             TokenKind::Identifier => write!(f, "Identifier"),
-            TokenKind::Equals => write!(f, "="),
-            TokenKind::Ampersand => write!(f, "&"),
-            TokenKind::Pipe => write!(f, "|"),
-            TokenKind::Caret => write!(f, "^"),
-            TokenKind::DoubleAsterisk => write!(f, "**"),
-            TokenKind::Tilde => write!(f, "~"),
+            TokenKind::Equals => write!(f, "Equals"),
+            TokenKind::Ampersand => write!(f, "Ampersand"),
+            TokenKind::Pipe => write!(f, "Pipe"),
+            TokenKind::Caret => write!(f, "Caret"),
+            TokenKind::DoubleAsterisk => write!(f, "DoubleAsterisk"),
+            TokenKind::Tilde => write!(f, "Tilde"),
             TokenKind::If => write!(f, "If"),
             TokenKind::Else => write!(f, "Else"),
             TokenKind::GreaterThan => write!(f, ">"),
@@ -99,15 +98,12 @@ impl Display for TokenKind {
             TokenKind::Colon => write!(f, "Colon"),
             TokenKind::Arrow => write!(f, "Arrow"),
             TokenKind::Newline => write!(f, "Newline"),
-            TokenKind::Quote => write!(f, "Quote"),
-            TokenKind::External => write!(f, "External"),
+            TokenKind::DoubleQuote => write!(f, "Quote"),
+            TokenKind::Extern => write!(f, "Extern"),
             TokenKind::Class => write!(f, "Class"),
             TokenKind::Self_ => write!(f, "Self"),
             TokenKind::Dot => write!(f, "Dot"),
-            TokenKind::I64 => write!(f, "I64"),
-            TokenKind::Bool => write!(f, "Bool"),
-            TokenKind::Str => write!(f, "Str"),
-            TokenKind::Void => write!(f, "Void"),
+            TokenKind::SingleQuote => write!(f, "SingleQuote"),
         }
     }
 }
@@ -165,14 +161,11 @@ impl<'a> Lexer<'a> {
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
                     "while" => TokenKind::While,
-                    "external" => TokenKind::External,
+                    "extern" => TokenKind::Extern,
                     "func" => TokenKind::Func,
                     "return" => TokenKind::Return,
                     "class" => TokenKind::Class,
                     "self" => TokenKind::Self_,
-                    "i64" => TokenKind::I64,
-                    "bool" => TokenKind::Bool,
-                    "str" => TokenKind::Str,
                     _ => TokenKind::Identifier,
                 }
             } else {
@@ -198,6 +191,7 @@ impl<'a> Lexer<'a> {
             '*' => {
                 self.lex_potential_double_char_operator('*', TokenKind::Asterisk, TokenKind::DoubleAsterisk)
             }
+            '%' => TokenKind::Percent,
             '/' => TokenKind::Slash,
             '(' => TokenKind::LeftParen,
             ')' => TokenKind::RightParen,
@@ -230,10 +224,13 @@ impl<'a> Lexer<'a> {
                 TokenKind::Colon
             }
             '"' => {
-                TokenKind::Quote
+                TokenKind::DoubleQuote
             }
             '.' => {
                 TokenKind::Dot
+            }
+            '\'' => {
+                TokenKind::SingleQuote
             }
 
             _ => TokenKind::Bad,

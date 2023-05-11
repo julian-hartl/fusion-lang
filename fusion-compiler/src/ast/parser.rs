@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTClassBody, ASTClassConstructor, ASTClassField, ASTClassMember, ASTClassMethod, ASTElseStatement, ASTExpression, ASTExprId, ASTFunctionReturnType, ASTStatement, ASTString, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, StaticTypeAnnotation, StringPart};
+use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTFunctionReturnType, ASTStatement, ASTString, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, StaticTypeAnnotation, StringPart, TypeSyntax};
 use crate::ast::lexer::{Lexer, Token, TokenKind};
 use crate::diagnostics::DiagnosticsBagCell;
 
@@ -48,8 +48,8 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) {
-        while let Some(stmt) = self.next_statement().map(|stmt| stmt.id) {
-            self.ast.mark_top_level_statement(stmt);
+        while let Some(stmt) = self.next_statement() {
+            self.ast.statements.push(stmt);
         }
     }
 
@@ -86,80 +86,16 @@ impl<'a> Parser<'a> {
             TokenKind::Return => {
                 self.parse_return_statement()
             }
-            TokenKind::Class => self.parse_class_statement(),
             _ => {
                 self.parse_expression_statement()
             }
-        }.clone();
+        };
         self.consume_whitespace();
         stmt
     }
 
-    fn parse_class_statement(&mut self) -> &ASTStatement {
-        let class_token = self.consume_and_check(TokenKind::Class).clone();
-        let identifier = self.consume_and_check(TokenKind::Identifier).clone();
-        let constructor = self.parse_optional_class_constructor();
-        let body = self.parse_class_body();
-        self.ast.class_statement(class_token, identifier, constructor, body)
-    }
 
-    fn parse_class_body(&mut self) -> ASTClassBody {
-        let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
-        let mut members = Vec::new();
-        while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
-            members.push(self.parse_class_member());
-        }
-        let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
-        ASTClassBody {
-            open_brace,
-            members,
-            close_brace,
-        }
-    }
-
-    fn parse_class_member(&mut self) -> ASTClassMember {
-        match self.current().kind {
-            TokenKind::Identifier => ASTClassMember::Field(self.parse_class_field()),
-            TokenKind::Func => {
-                let func_decl = self.parse_function_declaration();
-                ASTClassMember::Method(ASTClassMethod
-                {
-                    func_decl: func_decl.id,
-                })
-            }
-            _ => {
-                let stmt = self.parse_statement();
-                self.diagnostics_bag.borrow_mut().report_invalid_class_member(&stmt.span(self.ast));
-                ASTClassMember::Invalid(stmt.id)
-            }
-        }
-    }
-
-    fn parse_optional_class_constructor(&mut self) -> Option<ASTClassConstructor> {
-        match self.current().kind {
-            TokenKind::LeftParen => {
-                self.consume();
-                let fields = self.parse_comma_separated_list(
-                    TokenKind::RightParen,
-                    |parser| parser.parse_class_field(),
-                );
-                self.consume_and_check(TokenKind::RightParen);
-                Some(ASTClassConstructor {
-                    fields,
-                })
-            }
-            _ => None,
-        }
-    }
-
-    fn parse_class_field(&mut self) -> ASTClassField {
-        ASTClassField {
-            identifier: self.consume_and_check(TokenKind::Identifier).clone(),
-            type_annotation: self.parse_type_annotation(),
-        }
-    }
-
-    fn parse_function_declaration(&mut self) -> &ASTStatement {
+    fn parse_function_declaration(&mut self) -> ASTStatement {
         let funct_token = self.consume_and_check(TokenKind::Func).clone();
         let modifier_tokens = self.parse_optional_function_modifiers();
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
@@ -167,7 +103,13 @@ impl<'a> Parser<'a> {
         let return_type = self.parse_optional_return_type();
         let body = match self.current().kind {
             TokenKind::OpenBrace => {
-                Some(self.parse_block_statement().id)
+                let mut statements = Vec::new();
+                self.consume_and_check(TokenKind::OpenBrace);
+                while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
+                    statements.push(self.parse_statement());
+                }
+                self.consume_and_check(TokenKind::CloseBrace);
+                Some(statements)
             }
             _ => None,
         };
@@ -185,10 +127,10 @@ impl<'a> Parser<'a> {
     fn parse_optional_return_type(&mut self) -> Option<ASTFunctionReturnType> {
         if self.current().kind == TokenKind::Arrow {
             let arrow = self.consume_and_check(TokenKind::Arrow).clone();
-            let type_name = self.parse_type().clone();
+            let ty = self.parse_type().clone();
             return Some(ASTFunctionReturnType::new(
                 arrow,
-                type_name,
+                ty,
             ));
         }
         return None;
@@ -230,36 +172,36 @@ impl<'a> Parser<'a> {
         list
     }
 
-    fn parse_return_statement(&mut self) -> &ASTStatement {
+    fn parse_return_statement(&mut self) -> ASTStatement {
         let return_keyword = self.consume_and_check(TokenKind::Return).clone();
         if self.current().kind == TokenKind::Newline || self.is_at_end() {
             return self.ast.return_statement(return_keyword, None, true);
         }
-        let expression = self.parse_expression().id;
+        let expression = self.parse_expression();
         self.ast.return_statement(return_keyword, Some(expression), true)
     }
 
-    fn parse_while_statement(&mut self) -> &ASTStatement {
+    fn parse_while_statement(&mut self) -> ASTStatement {
         let while_keyword = self.consume_and_check(TokenKind::While).clone();
-        let condition_expr = self.parse_expression().id;
-        let body = self.parse_statement().id;
+        let condition_expr = self.parse_expression();
+        let body = self.parse_statement();
         self.ast.while_statement(while_keyword, condition_expr, body)
     }
 
-    fn parse_block_statement(&mut self) -> &ASTStatement {
+    fn parse_block_statement(&mut self) -> ASTStatement {
         let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
         let mut statements = Vec::new();
         while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
-            statements.push(self.parse_statement().id);
+            statements.push(self.parse_statement());
         }
         let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
         self.ast.block_statement(open_brace, statements, close_brace)
     }
 
-    fn parse_if_statement(&mut self) -> &ASTStatement {
+    fn parse_if_statement(&mut self) -> ASTStatement {
         let if_keyword = self.consume_and_check(TokenKind::If).clone();
-        let condition_expr = self.parse_expression().id;
-        let then = self.parse_statement().id;
+        let condition_expr = self.parse_expression();
+        let then = self.parse_statement();
         let else_statement = self.parse_optional_else_statement();
         self.ast.if_statement(if_keyword, condition_expr, then, else_statement)
     }
@@ -267,21 +209,21 @@ impl<'a> Parser<'a> {
     fn parse_optional_else_statement(&mut self) -> Option<ASTElseStatement> {
         if self.current().kind == TokenKind::Else {
             let else_keyword = self.consume_and_check(TokenKind::Else).clone();
-            let else_statement = self.parse_statement().id;
+            let else_statement = self.parse_statement();
             return Some(ASTElseStatement::new(else_keyword, else_statement));
         }
         return None;
     }
 
 
-    fn parse_let_statement(&mut self) -> &ASTStatement {
+    fn parse_let_statement(&mut self) -> ASTStatement {
         self.consume_and_check(TokenKind::Let);
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
         let optional_type_annotation = self.parse_optional_type_annotation();
         self.consume_and_check(TokenKind::Equals);
-        let expr = self.parse_expression().id;
+        let expr = self.parse_expression();
 
-        self.ast.let_statement(identifier, expr, optional_type_annotation, None)
+        self.ast.let_statement(identifier, expr, optional_type_annotation)
     }
 
     fn parse_optional_type_annotation(&mut self) -> Option<StaticTypeAnnotation> {
@@ -293,42 +235,43 @@ impl<'a> Parser<'a> {
 
     fn parse_type_annotation(&mut self) -> StaticTypeAnnotation {
         let colon = self.consume_and_check(TokenKind::Colon).clone();
-        let type_name = self.parse_type().clone();
-        return StaticTypeAnnotation::new(colon, type_name);
+        let ty = self.parse_type();
+        return StaticTypeAnnotation::new(colon, ty);
     }
 
-    fn parse_type(&mut self) -> &Token {
-        self.consume_and_check_multiple([
-            TokenKind::Identifier,
-            TokenKind::I64,
-            TokenKind::Str,
-            TokenKind::Bool,
-        ].as_slice())
+    fn parse_type(&mut self) -> TypeSyntax {
+        self.consume_whitespace();
+        let star = if self.current().kind == TokenKind::Asterisk {
+            Some(self.consume_and_check(TokenKind::Asterisk).clone())
+        } else {
+            None
+        };
+        let type_name = self.consume_and_check(TokenKind::Identifier).clone();
+        TypeSyntax::new(type_name, star)
     }
 
-    fn parse_expression_statement(&mut self) -> &ASTStatement {
-        let expr = self.parse_expression().id;
+    fn parse_expression_statement(&mut self) -> ASTStatement {
+        let expr = self.parse_expression();
         self.ast.expression_statement(expr)
     }
 
-    fn parse_expression(&mut self) -> &ASTExpression {
+    fn parse_expression(&mut self) -> ASTExpression {
         self.parse_assignment_expression()
     }
 
-    fn parse_assignment_expression(&mut self) -> &ASTExpression {
-        if self.current().kind == TokenKind::Identifier {
-            if self.peek(1).kind == TokenKind::Equals {
-                let identifier = self.consume_and_check(TokenKind::Identifier).clone();
-                let equals = self.consume_and_check(TokenKind::Equals).clone();
-                let expr = self.parse_expression().id;
-                return self.ast.assignment_expression(identifier, equals, expr, None);
-            }
+    fn parse_assignment_expression(&mut self) -> ASTExpression {
+        let assignee = self.parse_binary_expression(0);
+        self.consume_whitespace();
+        if self.current().kind == TokenKind::Equals {
+            let equals = self.consume_and_check(TokenKind::Equals).clone();
+            let expr = self.parse_expression();
+            return self.ast.assignment_expression(assignee, equals, expr);
         }
-        return self.parse_binary_expression(0);
+        assignee
     }
 
-    fn parse_binary_expression(&mut self, precedence: u8) -> &ASTExpression {
-        let mut left = self.parse_unary_expression().id;
+    fn parse_binary_expression(&mut self, precedence: u8) -> ASTExpression {
+        let mut left = self.parse_deref_expression();
 
         while let Some(operator) = self.parse_binary_operator() {
             let operator_precedence = operator.precedence();
@@ -336,17 +279,34 @@ impl<'a> Parser<'a> {
                 break;
             }
             self.consume();
-            let right = self.parse_binary_expression(operator_precedence).id;
-            left = self.ast.binary_expression(operator, left, right).id;
+            let right = self.parse_binary_expression(operator_precedence);
+            left = self.ast.binary_expression(operator, left, right);
         }
-        let left = self.ast.query_expr(&left);
-        return left;
+        left
     }
 
-    fn parse_unary_expression(&mut self) -> &ASTExpression {
+    fn parse_deref_expression(&mut self) -> ASTExpression {
+        if self.current().kind == TokenKind::Asterisk {
+            let star = self.consume_and_check(TokenKind::Asterisk).clone();
+            let expr = self.parse_deref_expression();
+            return self.ast.deref_expression(star, expr);
+        }
+        self.parse_ref_expression()
+    }
+
+    fn parse_ref_expression(&mut self) -> ASTExpression {
+        if self.current().kind == TokenKind::Ampersand {
+            let ampersand = self.consume_and_check(TokenKind::Ampersand).clone();
+            let expr = self.parse_deref_expression();
+            return self.ast.ref_expression(ampersand, expr);
+        }
+        self.parse_unary_expression()
+    }
+
+    fn parse_unary_expression(&mut self) -> ASTExpression {
         if let Some(operator) = self.parse_unary_operator() {
             self.consume();
-            let operand = self.parse_unary_expression().id;
+            let operand = self.parse_unary_expression();
             return self.ast.unary_expression(operator, operand);
         }
         return self.parse_primary_expression();
@@ -376,6 +336,9 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Minus => {
                 Some(ASTBinaryOperatorKind::Minus)
+            }
+            TokenKind::Percent => {
+                Some(ASTBinaryOperatorKind::Modulo)
             }
             TokenKind::Asterisk => {
                 Some(ASTBinaryOperatorKind::Multiply)
@@ -421,14 +384,14 @@ impl<'a> Parser<'a> {
         return kind.map(|kind| ASTBinaryOperator::new(kind, token.clone()));
     }
 
-    fn parse_primary_expression(&mut self) -> &ASTExpression {
+    fn parse_primary_expression(&mut self) -> ASTExpression {
         let token = self.consume().clone();
         let expr = match token.kind {
             TokenKind::Number(number) => {
                 self.ast.number_expression(token, number)
             }
             TokenKind::LeftParen => {
-                let expr = self.parse_expression().id;
+                let expr = self.parse_expression();
                 let left_paren = token;
                 let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
                 self.ast.parenthesized_expression(left_paren, expr, right_paren)
@@ -440,78 +403,87 @@ impl<'a> Parser<'a> {
                 let value = token.kind == TokenKind::True;
                 self.ast.boolean_expression(token, value)
             }
-            TokenKind::Quote => {
-                let open_quote = token;
-                // todo: handle escape sequences
-                let mut is_escape = false;
-                let mut parts: Vec<StringPart> = Vec::new();
-                while self.current().kind != TokenKind::Quote && !self.is_at_end() {
-                    let literal = &self.current().span.literal;
-                    if literal == "\\" {
-                        is_escape = true;
-                    } else {
-                        if is_escape {
-                            let mut char_iter = literal.chars();
-                            let c = EscapedCharacter::from_char(char_iter.next().unwrap());
-                            if let Some(c) = c {
-                                parts.push(StringPart::EscapeSequence(c))
-                            } else {
-                                self.diagnostics_bag.borrow_mut().report_invalid_escape_sequence(&self.current());
-                            }
-                            // push the rest of the string
-                            let remainder = char_iter.as_str();
-                            if remainder.len() > 0 {
-                                parts.push(StringPart::Literal(remainder.to_string()));
-                            }
-                            is_escape = false;
-                        } else {
-                            parts.push(StringPart::Literal(literal.clone()));
-                        }
-                    }
-                    self.consume_no_whitespace();
-                }
-                let close_quote = self.consume_and_check(TokenKind::Quote).clone();
-                self.ast.string_expression(open_quote, ASTString::new(parts), close_quote)
+            TokenKind::DoubleQuote => {
+                self.parse_string_expression(token)
             }
-            TokenKind::Self_ => {
-                self.ast.self_expression(token)
+            TokenKind::SingleQuote => {
+                self.parse_char_expression(token)
             }
             _ => {
                 self.diagnostics_bag.borrow_mut().report_expected_expression(&token);
                 self.ast.error_expression(token.span.clone())
             }
-        }.id.clone();
+        };
         let mut expr = expr;
         loop {
             match self.current().kind {
                 TokenKind::LeftParen => {
-                    expr = self.parse_call_expression(expr).id;
-                }
-                TokenKind::Dot => {
-                    expr = self.parse_member_expression(expr).id;
+                    expr = self.parse_call_expression(expr);
                 }
                 _ => {
-                    return self.ast.query_expr(&expr)
+                    return expr;
                 }
             }
         }
     }
 
-    fn parse_member_expression(&mut self, object: ASTExprId) -> &ASTExpression {
-        let dot = self.consume_and_check(TokenKind::Dot).clone();
-        let property = self.consume_and_check(TokenKind::Identifier).clone();
-        return self.ast.member_expression(object, dot, property);
-    }
+    fn parse_char_expression(&mut self, token: Token) -> ASTExpression {
+        let open_quote = token;
+        let mut char = '\0';
+        let mut has_error = false;
+        while self.current().kind != TokenKind::SingleQuote && !self.is_at_end() {
 
-    fn parse_call_expression(&mut self, callee: ASTExprId) -> &ASTExpression {
-        let left_paren = self.consume_and_check(TokenKind::LeftParen).clone();
-        let mut arguments = Vec::new();
-        while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
-            arguments.push(self.parse_expression().id);
-            if self.current().kind != TokenKind::RightParen {
-                self.consume_and_check(TokenKind::Comma);
+            let token = self.consume();
+            let literal = &token.span.literal;
+            if !has_error {
+                if literal.len() != 1 {
+                    self.diagnostics_bag.borrow_mut().report_invalid_character_literal(&token.span);
+                    has_error = true;
+                } else {
+                    char = literal.chars().next().unwrap();
+                }
             }
         }
+        let close_quote = self.consume_and_check(TokenKind::SingleQuote).clone();
+        self.ast.character_expression(open_quote, char, close_quote)
+    }
+
+    fn parse_string_expression(&mut self, token: Token) -> ASTExpression {
+        let open_quote = token;
+        let mut is_escape = false;
+        let mut parts: Vec<StringPart> = Vec::new();
+        while self.current().kind != TokenKind::DoubleQuote && !self.is_at_end() {
+            let literal = &self.current().span.literal;
+            if literal == "\\" {
+                is_escape = true;
+            } else {
+                if is_escape {
+                    let mut char_iter = literal.chars();
+                    let c = EscapedCharacter::from_char(char_iter.next().unwrap());
+                    if let Some(c) = c {
+                        parts.push(StringPart::EscapeSequence(c))
+                    } else {
+                        self.diagnostics_bag.borrow_mut().report_invalid_escape_sequence(&self.current());
+                    }
+                    // push the rest of the string
+                    let remainder = char_iter.as_str();
+                    if remainder.len() > 0 {
+                        parts.push(StringPart::Literal(remainder.to_string()));
+                    }
+                    is_escape = false;
+                } else {
+                    parts.push(StringPart::Literal(literal.clone()));
+                }
+            }
+            self.consume_no_whitespace();
+        }
+        let close_quote = self.consume_and_check(TokenKind::DoubleQuote).clone();
+        self.ast.string_expression(open_quote, ASTString::new(parts), close_quote)
+    }
+
+    fn parse_call_expression(&mut self, callee: ASTExpression) -> ASTExpression {
+        let left_paren = self.consume_and_check(TokenKind::LeftParen).clone();
+        let mut arguments = self.parse_comma_separated_list(TokenKind::RightParen, |parser| parser.parse_expression()).iter().map(|expr| expr.clone()).collect();
         let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
         return self.ast.call_expression(callee, left_paren, arguments, right_paren);
     }
