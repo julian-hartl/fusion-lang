@@ -48,9 +48,9 @@ impl CompilationUnit {
         let hir = hir_gen.gen(&ast);
         hir.visualize();
         Self::check_diagnostics(&source_text, &diagnostics_bag).map_err(|_| Rc::clone(&diagnostics_bag))?;
-        if let Some(path) = &source_text.path {
-            Self::format(&ast, &Path::new(path.as_str())).expect("Failed to format AST");
-        }
+        // if let Some(path) = &source_text.path {
+        //     Self::format(&ast, &Path::new(path.as_str())).expect("Failed to format AST");
+        // }
         let mir_gen = MIRGen::new(
             Rc::clone(&diagnostics_bag),
             &hir.scope

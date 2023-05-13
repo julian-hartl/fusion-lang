@@ -1,5 +1,5 @@
 use termion::color::{Fg, Reset};
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement, ASTDerefExpression, ASTRefExpression, ASTCharExpression};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement, ASTDerefExpression, ASTRefExpression, ASTCharExpression, ASTCastExpression};
 use crate::text::span::TextSpan;
 use crate::ast::printer::ASTPrinter;
 
@@ -105,8 +105,13 @@ pub trait ASTVisitor {
             ASTExpressionKind::Char(expr) => {
                 self.visit_char_expression(expr, &expression);
             }
+            ASTExpressionKind::Cast(expr) => {
+                self.visit_cast_expression(expr, &expression);
+            }
         }
     }
+
+    fn visit_cast_expression(&mut self, cast_expression: &ASTCastExpression, expr: &ASTExpression);
 
     fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression);
 
@@ -124,9 +129,7 @@ pub trait ASTVisitor {
         self.do_visit_expression(expression);
     }
 
-    fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression, expr: &ASTExpression) {
-        self.visit_expression(&assignment_expression.expression);
-    }
+    fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression, expr: &ASTExpression);
 
     fn visit_identifier_expression(&mut self, variable_expression: &ASTIdentifierExpression, expr: &ASTExpression);
 

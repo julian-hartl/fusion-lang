@@ -195,6 +195,14 @@ impl ASTVisitor for ASTPrinter<'_> {
         ));
     }
 
+    fn visit_cast_expression(&mut self, cast_expression: &ASTCastExpression, expr: &ASTExpression) {
+        self.visit_expression(&cast_expression.expr);
+        self.add_whitespace();
+        self.add_text("as");
+        self.add_whitespace();
+        self.add_type(format!("{}", &cast_expression.ty).as_str());
+    }
+
     fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression) {
         self.add_string("'");
         self.add_string(&char_expression.value.to_string());

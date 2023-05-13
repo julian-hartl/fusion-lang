@@ -135,9 +135,9 @@ impl Instruction {
                 primary.format()
             }
             InstructionKind::BinaryOp(op, lhs, rhs, _) => {
-                format!("{} {} {}", self.format_bin_op(op), lhs.format(), rhs.format())
+                format!("{} {} {}", self.format_bin_op(op), lhs.0.format(), rhs.0.format())
             }
-            InstructionKind::UnaryOp(op, primary,_) => {
+            InstructionKind::UnaryOp(op, primary, _) => {
                 format!("{} {}", self.format_un_op(op), primary.format())
             }
             InstructionKind::Load(expr) => {
@@ -145,6 +145,9 @@ impl Instruction {
             }
             InstructionKind::GetAddress(expr) => {
                 format!("getaddr {}", expr.format())
+            }
+            InstructionKind::Cast(expr, ty) => {
+                format!("cast {} to {}", expr.format(), ty)
             }
         };
         if let Some(assign_to) = self.assign_to {
@@ -224,10 +227,11 @@ pub enum InstructionKind {
     Store(MemoryPointer, Primary),
     Call(FunctionId, Vec<Primary>),
     Primary(Primary),
-    BinaryOp(HIRBinaryOperator, Primary, Primary, Type),
+    BinaryOp(HIRBinaryOperator, (Primary, Type), (Primary, Type), Type),
     UnaryOp(HIRUnaryOperator, Primary, Type),
     Load(MemoryPointer),
     GetAddress(Primary),
+    Cast(Primary, Type),
 }
 
 #[derive(Debug)]
@@ -297,7 +301,7 @@ impl Primary {
                 Type::I64
             }
             Primary::Str(_) => {
-                Type::StringSlice()
+                Type::StringSlice(true)
             }
             Primary::Variable(_, ty) => {
                 ty.clone()
@@ -604,7 +608,7 @@ impl<'a> BodyGen<'a> {
                 let right = self.gen_expr(&bin_expr.right);
                 let temp_var = self.body.scope.new_temp_variable();
                 let bin_op = Instruction {
-                    kind: InstructionKind::BinaryOp(bin_expr.op.clone(), left, right, expr.ty.clone()),
+                    kind: InstructionKind::BinaryOp(bin_expr.op.clone(), (left, bin_expr.left.ty.clone()), (right, bin_expr.right.ty.clone()), expr.ty.clone()),
                     span: expr.span.clone(),
                     assign_to: Some(temp_var),
                 };
@@ -618,7 +622,7 @@ impl<'a> BodyGen<'a> {
                     span: expr.span.clone(),
                     assign_to: Some(temp_var),
                 };
-                (Some(vec![unary_op]), Primary::Variable(temp_var,expr.ty.clone()))
+                (Some(vec![unary_op]), Primary::Variable(temp_var, expr.ty.clone()))
             }
             HIRExpressionKind::Parenthesized(expr) => {
                 (None, self.gen_expr(&expr.expression))
@@ -703,6 +707,16 @@ impl<'a> BodyGen<'a> {
                     assign_to: Some(temp_var),
                 };
                 (Some(vec![deref]), Primary::Variable(temp_var, expr.ty.clone()))
+            }
+            HIRExpressionKind::Cast(cast_expr) => {
+                let primary = self.gen_expr(&cast_expr.expression);
+                let temp_var = self.body.scope.new_temp_variable();
+                let cast = Instruction {
+                    kind: InstructionKind::Cast(primary, cast_expr.ty.clone()),
+                    span: expr.span.clone(),
+                    assign_to: Some(temp_var),
+                };
+                (Some(vec![cast]), Primary::Variable(temp_var, expr.ty.clone()))
             }
         };
         if let Some(instructions) = instructions {

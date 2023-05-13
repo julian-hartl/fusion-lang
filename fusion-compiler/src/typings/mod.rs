@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter};
+use std::ops::DerefMut;
 
 use crate::ast::lexer::TokenKind;
 
@@ -28,8 +29,7 @@ pub enum Type {
     Bool,
     Char,
     Void,
-    Ptr(Box<Type>),
-    Class(String),
+    Ptr(Box<Type>, bool),
     Function(FunctionType),
     Unresolved,
     Error,
@@ -42,9 +42,7 @@ pub struct Layout {
 }
 
 impl Layout {
-
     pub const POINTER_SIZE: usize = 8;
-
 }
 
 impl Display for Type {
@@ -55,14 +53,17 @@ impl Display for Type {
             Type::Unresolved => write!(f, "unresolved"),
             Type::Void => write!(f, "void"),
             Type::Error => write!(f, "?"),
-            Type::Class(name) => write!(f, "{}", name),
             Type::Function(FunctionType { parameters, return_type, name }) => {
                 let parameters = parameters.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
                 let return_type = return_type.to_string();
                 write!(f, "({}) -> {}", parameters, return_type)
             }
-            Type::Ptr(ty) => {
-                write!(f, "*{}", ty)
+            Type::Ptr(ty, is_mut) => {
+                if *is_mut {
+                    write!(f, "*mut {}", ty)
+                } else {
+                    write!(f, "*{}", ty)
+                }
             }
             Type::Char => write!(f, "char"),
         }
@@ -70,9 +71,8 @@ impl Display for Type {
 }
 
 impl Type {
-
-    pub fn StringSlice() -> Self {
-        Type::Ptr(Box::new(Type::Char))
+    pub fn StringSlice(as_mut: bool) -> Self {
+        Type::Ptr(Box::new(Type::Char),as_mut)
     }
 
     pub fn is_assignable_to(&self, other: &Type) -> bool {
@@ -80,6 +80,15 @@ impl Type {
             return true;
         }
         match (self, other) {
+            (Type::Ptr(ty1,is_mutable_1), Type::Ptr(ty2,is_mutable_2)) => {
+                if *is_mutable_2 {
+                    return *is_mutable_1;
+                }
+                if **ty1 == Type::Void || **ty2 == Type::Void {
+                    return true;
+                }
+                ty1.is_assignable_to(ty2)
+            }
             (Type::Error, _) => true,
             (_, Type::Error) => true,
             _ => false,
@@ -98,7 +107,7 @@ impl Type {
 
     pub fn deref(&self) -> Option<Type> {
         match self {
-            Type::Ptr(ty) => Some(*ty.clone()),
+            Type::Ptr(ty,_) => Some(*ty.clone()),
             _ => None,
         }
     }
@@ -117,7 +126,7 @@ impl Type {
                 size: 0,
                 alignment: 0,
             },
-            Type::Ptr(_) => Layout {
+            Type::Ptr(_,_) => Layout {
                 size: Layout::POINTER_SIZE,
                 alignment: Layout::POINTER_SIZE,
             },

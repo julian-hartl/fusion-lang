@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter};
+
 use termion::color::{Fg, Reset};
 
 use printer::ASTPrinter;
@@ -30,9 +31,9 @@ impl Ast {
         ))
     }
 
-    pub fn let_statement(&mut self, identifier: Token, initializer: ASTExpression, type_annotation: Option<StaticTypeAnnotation>) -> ASTStatement {
+    pub fn let_statement(&mut self, mut_token: Option<Token>, identifier: Token, initializer: ASTExpression, type_annotation: Option<StaticTypeAnnotation>) -> ASTStatement {
         ASTStatement::new(
-            ASTStatementKind::Let(ASTLetStatement { identifier, initializer, type_annotation }))
+            ASTStatementKind::Let(ASTLetStatement { mut_token,identifier, initializer, type_annotation }))
     }
 
     pub fn if_statement(&mut self, if_keyword: Token, condition: ASTExpression, then: ASTStatement, else_statement: Option<ASTElseStatement>) -> ASTStatement {
@@ -99,8 +100,8 @@ impl Ast {
         ASTExpression::new(ASTExpressionKind::Call(ASTCallExpression { callee: Box::new(callee), arguments, left_paren, right_paren }))
     }
 
-    pub fn ref_expression(&mut self, ampersand: Token, expression: ASTExpression) -> ASTExpression {
-        ASTExpression::new(ASTExpressionKind::Ref(ASTRefExpression { ampersand, expr: Box::new(expression) }))
+    pub fn ref_expression(&mut self, ampersand: Token, mut_token: Option<Token>, expression: ASTExpression) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Ref(ASTRefExpression { mut_token,ampersand, expr: Box::new(expression) }))
     }
 
     pub fn deref_expression(&mut self, star: Token, expression: ASTExpression) -> ASTExpression {
@@ -109,6 +110,10 @@ impl Ast {
 
     pub fn character_expression(&mut self, open_quote: Token, value: char, close_quote: Token) -> ASTExpression {
         ASTExpression::new(ASTExpressionKind::Char(ASTCharExpression { open_quote, value, close_quote }))
+    }
+
+    pub fn cast_expression(&mut self, expression: ASTExpression, as_keyword: Token, ty: TypeSyntax) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Cast(ASTCastExpression { as_keyword, expr: Box::new(expression), ty }))
     }
 
     pub fn error_expression(&mut self, span: TextSpan) -> ASTExpression {
@@ -154,23 +159,47 @@ pub struct StaticTypeAnnotation {
     pub colon: Token,
     pub ty: TypeSyntax,
 }
-#[derive(Debug, Clone)]
 
+#[derive(Debug, Clone)]
 pub struct TypeSyntax {
     pub name: Token,
-    pub star: Option<Token>,
+    pub ptr: Option<PtrSyntax>,
+}
+#[derive(Debug, Clone)]
+pub struct PtrSyntax {
+    pub star: Token,
+    pub mut_token: Option<Token>,
 }
 
 impl TypeSyntax {
-    pub fn new(name: Token, star: Option<Token>) -> Self {
-        Self { name, star }
+    pub fn new(name: Token, ptr: Option<PtrSyntax>) -> Self {
+        Self { name, ptr }
+    }
+
+    pub fn span(&self) -> TextSpan {
+        let mut spans = vec![
+            &self.name.span,
+        ];
+        if let Some(ptr) = &self.ptr {
+            spans.push(&ptr.star.span);
+            if let Some(mut_token) = &ptr.mut_token {
+                spans.push(&mut_token.span);
+            }
+        }
+        TextSpan::merge(
+            spans
+        )
     }
 }
 
 impl Display for TypeSyntax {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if let Some(star) = &self.star {
-            write!(f, "*{}", self.name.span.literal)
+        if let Some(ptr) = &self.ptr {
+            if ptr.mut_token.is_some() {
+                write!(f, "*mut {}", self.name.span.literal)
+            } else {
+                write!(f, "*{}", self.name.span.literal)
+            }
         } else {
             write!(f, "{}", self.name.span.literal)
         }
@@ -193,6 +222,7 @@ pub enum FuncDeclParameter {
 
 #[derive(Debug, Clone)]
 pub struct NormalFuncDeclParameter {
+    pub mut_token: Option<Token>,
     pub identifier: Token,
     pub type_annotation: StaticTypeAnnotation,
 }
@@ -255,6 +285,7 @@ pub struct ASTIfStatement {
 
 #[derive(Debug, Clone)]
 pub struct ASTLetStatement {
+    pub mut_token: Option<Token>,
     pub identifier: Token,
     pub initializer: ASTExpression,
     pub type_annotation: Option<StaticTypeAnnotation>,
@@ -386,7 +417,6 @@ impl ASTStatement {
                     spans
                 )
             }
-
         }
     }
 }
@@ -430,9 +460,19 @@ pub enum ASTExpressionKind {
     Deref(
         ASTDerefExpression
     ),
+    Cast(
+        ASTCastExpression
+    ),
     Error(
         TextSpan
     ),
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTCastExpression {
+    pub expr: Box<ASTExpression>,
+    pub as_keyword: Token,
+    pub ty: TypeSyntax,
 }
 
 #[derive(Debug, Clone)]
@@ -445,6 +485,7 @@ pub struct ASTCharExpression {
 #[derive(Debug, Clone)]
 pub struct ASTRefExpression {
     pub ampersand: Token,
+    pub mut_token: Option<Token>,
     pub expr: Box<ASTExpression>,
 }
 
@@ -686,7 +727,7 @@ pub struct ASTExpression {
 
 impl ASTExpression {
     pub fn new(kind: ASTExpressionKind) -> Self {
-        ASTExpression { kind}
+        ASTExpression { kind }
     }
 
     pub fn span(&self) -> TextSpan {
@@ -746,6 +787,12 @@ impl ASTExpression {
             ASTExpressionKind::Char(expr) => {
                 let spans = vec![&expr.open_quote.span, &expr.close_quote.span];
                 TextSpan::merge(spans)
+            }
+            ASTExpressionKind::Cast(expr) => {
+                let span1 = &expr.as_keyword.span;
+                let span2 = &expr.ty.span();
+                let span3 = expr.expr.span();
+                TextSpan::merge(vec![&span1, &span2, &span3])
             }
         }
     }

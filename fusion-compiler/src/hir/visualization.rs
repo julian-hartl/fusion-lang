@@ -1,7 +1,7 @@
 use std::fmt::format;
 use std::ops::Not;
 
-use crate::hir::{HIR, HIRAssignmentExpression, HIRAssignmentTargetKind, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
+use crate::hir::{HIR, HIRAssignmentExpression, HIRAssignmentTargetKind, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
 use crate::hir::visitor::HIRVisitor;
 
 pub struct HIRVisualizer<'a> {
@@ -31,6 +31,10 @@ impl<'a> HIRVisualizer<'a> {
                     let variable = self.hir.scope.get_variable(id);
                     self.write("let");
                     self.write_whitespace();
+                    if variable.is_mutable {
+                        self.write("mut");
+                        self.write_whitespace();
+                    }
                     self.write(&variable.name);
                     self.write_whitespace();
                     self.write(":");
@@ -55,9 +59,15 @@ impl<'a> HIRVisualizer<'a> {
                     let param = format!("{}: {}", parameter.name, parameter.ty);
                     let param = param.as_str();
                     if i == 0 {
+                        if parameter.is_mutable {
+                            self.write("mut ");
+                        }
                         self.write(param);
                     } else {
                         self.write(", ");
+                        if parameter.is_mutable {
+                            self.write("mut ");
+                        }
                         self.write(param);
                     }
                 }
@@ -131,6 +141,10 @@ impl HIRVisitor for HIRVisualizer<'_> {
         self.write("let");
         self.write_whitespace();
         let variable = self.hir.scope.get_variable(&stmt.variable_id);
+        if variable.is_mutable {
+            self.write("mut");
+            self.write_whitespace();
+        }
         self.write(&variable.name);
         self.write(":");
         self.write_whitespace();
@@ -268,5 +282,10 @@ impl HIRVisitor for HIRVisualizer<'_> {
     fn visit_deref_expr(&mut self, expr: &HIRDerefExpression) {
         self.write("*");
         self.visit_expr(&expr.expression);
+    }
+
+    fn visit_cast_expr(&mut self, expr: &HIRCastExpression) {
+        self.visit_expr(&expr.expression);
+        self.write(format!(" as {}", expr.ty).as_str());
     }
 }

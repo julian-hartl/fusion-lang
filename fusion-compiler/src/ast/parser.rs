@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTFunctionReturnType, ASTStatement, ASTString, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, StaticTypeAnnotation, StringPart, TypeSyntax};
+use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTFunctionReturnType, ASTStatement, ASTString, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, PtrSyntax, StaticTypeAnnotation, StringPart, TypeSyntax};
 use crate::ast::lexer::{Lexer, Token, TokenKind};
 use crate::diagnostics::DiagnosticsBagCell;
 
@@ -91,6 +91,9 @@ impl<'a> Parser<'a> {
             }
         };
         self.consume_whitespace();
+        if self.current().kind == TokenKind::SemiColon {
+            self.consume();
+        }
         stmt
     }
 
@@ -150,6 +153,7 @@ impl<'a> Parser<'a> {
                     }
                     _ => {
                         FuncDeclParameter::Normal(NormalFuncDeclParameter {
+                            mut_token: parser.maybe_consume(TokenKind::Mut).cloned(),
                             identifier: parser.consume_and_check(TokenKind::Identifier).clone(),
                             type_annotation: parser.parse_type_annotation(),
                         })
@@ -218,12 +222,13 @@ impl<'a> Parser<'a> {
 
     fn parse_let_statement(&mut self) -> ASTStatement {
         self.consume_and_check(TokenKind::Let);
+        let mut_token = self.maybe_consume(TokenKind::Mut).cloned();
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
         let optional_type_annotation = self.parse_optional_type_annotation();
         self.consume_and_check(TokenKind::Equals);
         let expr = self.parse_expression();
 
-        self.ast.let_statement(identifier, expr, optional_type_annotation)
+        self.ast.let_statement(mut_token, identifier, expr, optional_type_annotation)
     }
 
     fn parse_optional_type_annotation(&mut self) -> Option<StaticTypeAnnotation> {
@@ -241,13 +246,16 @@ impl<'a> Parser<'a> {
 
     fn parse_type(&mut self) -> TypeSyntax {
         self.consume_whitespace();
-        let star = if self.current().kind == TokenKind::Asterisk {
-            Some(self.consume_and_check(TokenKind::Asterisk).clone())
+        let ptr = if self.current().kind == TokenKind::Asterisk {
+            Some((self.consume_and_check(TokenKind::Asterisk).clone(), self.maybe_consume(TokenKind::Mut).cloned()))
         } else {
             None
         };
         let type_name = self.consume_and_check(TokenKind::Identifier).clone();
-        TypeSyntax::new(type_name, star)
+        TypeSyntax::new(type_name, ptr.map(|(asterisk, mut_)| PtrSyntax {
+            mut_token: mut_,
+            star: asterisk,
+        }))
     }
 
     fn parse_expression_statement(&mut self) -> ASTStatement {
@@ -271,7 +279,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_binary_expression(&mut self, precedence: u8) -> ASTExpression {
-        let mut left = self.parse_deref_expression();
+        let mut left = self.parse_cast_expression();
 
         while let Some(operator) = self.parse_binary_operator() {
             let operator_precedence = operator.precedence();
@@ -283,6 +291,16 @@ impl<'a> Parser<'a> {
             left = self.ast.binary_expression(operator, left, right);
         }
         left
+    }
+
+    fn parse_cast_expression(&mut self) -> ASTExpression {
+        let expr = self.parse_deref_expression();
+        if self.current().kind == TokenKind::As {
+            let as_keyword = self.consume_and_check(TokenKind::As).clone();
+            let ty = self.parse_type();
+            return self.ast.cast_expression(expr, as_keyword, ty);
+        }
+        expr
     }
 
     fn parse_deref_expression(&mut self) -> ASTExpression {
@@ -297,8 +315,9 @@ impl<'a> Parser<'a> {
     fn parse_ref_expression(&mut self) -> ASTExpression {
         if self.current().kind == TokenKind::Ampersand {
             let ampersand = self.consume_and_check(TokenKind::Ampersand).clone();
+            let mut_token = self.maybe_consume(TokenKind::Mut).cloned();
             let expr = self.parse_deref_expression();
-            return self.ast.ref_expression(ampersand, expr);
+            return self.ast.ref_expression(ampersand, mut_token, expr);
         }
         self.parse_unary_expression()
     }
@@ -432,7 +451,6 @@ impl<'a> Parser<'a> {
         let mut char = '\0';
         let mut has_error = false;
         while self.current().kind != TokenKind::SingleQuote && !self.is_at_end() {
-
             let token = self.consume();
             let literal = &token.span.literal;
             if !has_error {
@@ -522,6 +540,12 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn consume_whitespace_only(&self) {
+        while self.current().kind == TokenKind::Whitespace {
+            self.consume_no_whitespace();
+        }
+    }
+
     fn consume_and_check_multiple(&self, kinds: &[TokenKind]) -> &Token {
         let token = self.consume();
         if !kinds.contains(&token.kind) {
@@ -542,5 +566,13 @@ impl<'a> Parser<'a> {
             );
         }
         token
+    }
+
+    fn maybe_consume(&self, kind: TokenKind) -> Option<&Token> {
+        if self.current().kind == kind {
+            Some(self.consume())
+        } else {
+            None
+        }
     }
 }

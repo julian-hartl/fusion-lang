@@ -38,6 +38,8 @@ pub enum TokenKind {
     Return,
     Class,
     Self_,
+    As,
+    Mut,
     // Separators
     LeftParen,
     RightParen,
@@ -49,6 +51,7 @@ pub enum TokenKind {
     DoubleQuote,
     SingleQuote,
     Dot,
+    SemiColon,
     // Other
     Bad,
     Whitespace,
@@ -104,6 +107,9 @@ impl Display for TokenKind {
             TokenKind::Self_ => write!(f, "Self"),
             TokenKind::Dot => write!(f, "Dot"),
             TokenKind::SingleQuote => write!(f, "SingleQuote"),
+            TokenKind::SemiColon => write!(f, "SemiColon"),
+            TokenKind::As => write!(f, "As"),
+            TokenKind::Mut => write!(f, "Mut"),
         }
     }
 }
@@ -166,6 +172,8 @@ impl<'a> Lexer<'a> {
                     "return" => TokenKind::Return,
                     "class" => TokenKind::Class,
                     "self" => TokenKind::Self_,
+                    "as" => TokenKind::As,
+                    "mut" => TokenKind::Mut,
                     _ => TokenKind::Identifier,
                 }
             } else {
@@ -231,6 +239,9 @@ impl<'a> Lexer<'a> {
             }
             '\'' => {
                 TokenKind::SingleQuote
+            }
+            ';' => {
+                TokenKind::SemiColon
             }
 
             _ => TokenKind::Bad,

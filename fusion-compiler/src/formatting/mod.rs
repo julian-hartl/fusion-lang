@@ -1,4 +1,4 @@
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStringExpression, ASTUnaryExpression, ASTWhileStatement, FuncDeclParameter};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStringExpression, ASTUnaryExpression, ASTWhileStatement, FuncDeclParameter};
 use crate::ast::visitor::ASTVisitor;
 use crate::text::span::TextSpan;
 
@@ -166,6 +166,12 @@ impl ASTVisitor for Formatter<'_> {
         self.write_indent();
         self.do_visit_statement(statement);
         self.new_line();
+    }
+
+    fn visit_cast_expression(&mut self, cast_expression: &ASTCastExpression, expr: &ASTExpression) {
+        self.visit_expression(&cast_expression.expr);
+        self.write(" as ");
+        self.write(format!("{}", &cast_expression.ty).as_str());
     }
 
     fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression) {

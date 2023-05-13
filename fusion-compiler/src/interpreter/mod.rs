@@ -1,8 +1,209 @@
 use std::collections::HashMap;
 
-use crate::hir::{FunctionId, HIRBinaryOperator, HIRUnaryOperator, Scope};
+use crate::hir::{FunctionId, HIRBinaryOperator, HIRBinaryOperatorVisitor, HIRUnaryOperator, Scope};
 use crate::mir::{BasicBlock, Body, InstructionKind, Label, MemoryPointer, MIR, Primary, TerminatorKind};
-use crate::typings::Layout;
+use crate::typings::{Layout, Type};
+
+fn as_i64(value: &[u8]) -> i64 {
+    i64::from_le_bytes(value.try_into().unwrap())
+}
+
+fn as_bool(value: &[u8]) -> bool {
+    value[0] != 0
+}
+
+fn as_char(value: &[u8]) -> char {
+    value[0] as char
+}
+
+fn from_bool(value: bool) -> Vec<u8> {
+    vec![value as u8]
+}
+
+fn resolve_value_by_type(ty: &Type, value: &Vec<u8>) -> Vec<u8> {
+    let value = match ty {
+        Type::I64 =>
+            as_i64(&value).to_le_bytes().to_vec(),
+
+        Type::Bool => {
+            from_bool(as_bool(&value))
+        }
+        Type::Char => {
+            vec![as_char(&value) as u8]
+        }
+        Type::Void => {
+            Vec::new()
+        }
+        Type::Ptr(_,_) => {
+            Ptr {
+                ptr: as_i64(&value) as usize,
+            }.as_bytes().to_vec()
+        }
+        Type::Function(_) => {
+            unimplemented!()
+        }
+        Type::Unresolved => {
+            unreachable!()
+        }
+        Type::Error => {
+            unreachable!()
+        }
+    };
+    value
+}
+
+
+struct BinaryOpInterpreter {
+    lhs: Vec<u8>,
+    rhs: Vec<u8>,
+}
+
+impl HIRBinaryOperatorVisitor<Vec<u8>> for BinaryOpInterpreter {
+    fn visit_i64_add(&self) -> Vec<u8> {
+        let lhs = as_i64(&self.lhs);
+        let rhs = as_i64(&self.rhs);
+        let result = lhs + rhs;
+        result.to_le_bytes().to_vec()
+    }
+
+    fn visit_ptr_i64_add(&self, inner_type: &Type) -> Vec<u8> {
+        let lhs = as_i64(&self.lhs);
+        let rhs = as_i64(&self.rhs);
+        let result = lhs + rhs;
+        result.to_le_bytes().to_vec()
+    }
+
+    fn visit_char_add(&self) -> Vec<u8> {
+        let lhs = as_char(&self.lhs);
+        let rhs = as_char(&self.rhs);
+        let result = lhs as u8 + rhs as u8;
+        vec![result]
+    }
+
+    fn visit_i64_subtract(&self) -> Vec<u8> {
+        let lhs = as_i64(&self.lhs);
+        let rhs = as_i64(&self.rhs);
+        let result = lhs - rhs;
+        result.to_le_bytes().to_vec()
+    }
+
+    fn visit_ptr_i64_subtract(&self, inner_type: &Type) -> Vec<u8> {
+        let lhs = as_i64(&self.lhs);
+        let rhs = as_i64(&self.rhs);
+        let result = lhs - rhs;
+        result.to_le_bytes().to_vec()
+    }
+
+    fn visit_char_subtract(&self) -> Vec<u8> {
+        let lhs = as_char(&self.lhs);
+        let rhs = as_char(&self.rhs);
+        let result = lhs as u8 - rhs as u8;
+        vec![result]
+    }
+
+    fn visit_i64_multiply(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_char_multiply(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_i64_divide(&self) -> Vec<u8> {
+        let lhs = as_i64(&self.lhs);
+        let rhs = as_i64(&self.rhs);
+        let result = lhs / rhs;
+        result.to_le_bytes().to_vec()
+    }
+
+    fn visit_char_divide(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_equals(&self, lhs: &Type, rhs: &Type) -> Vec<u8> {
+        let lhs = resolve_value_by_type(lhs, &self.lhs);
+        let rhs = resolve_value_by_type(rhs, &self.rhs);
+        let result = lhs == rhs;
+        from_bool(result)
+    }
+
+    fn visit_not_equals(&self, lhs: &Type, rhs: &Type) -> Vec<u8> {
+        let lhs = resolve_value_by_type(lhs, &self.lhs);
+        let rhs = resolve_value_by_type(rhs, &self.rhs);
+        let result = lhs != rhs;
+        from_bool(result)
+    }
+
+    fn visit_i64_less_than(&self) -> Vec<u8> {
+        let lhs = as_i64(&self.lhs);
+        let rhs = as_i64(&self.rhs);
+        let result = lhs < rhs;
+        from_bool(result)
+    }
+
+    fn visit_char_less_than(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_i64_less_than_or_equal(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_char_less_than_or_equal(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_i64_greater_than(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_char_greater_than(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_i64_greater_than_or_equal(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_char_greater_than_or_equal(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_i64_bitwise_and(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_char_bitwise_and(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_i64_bitwise_or(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_char_bitwise_or(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_i64_bitwise_xor(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_char_bitwise_xor(&self) -> Vec<u8> {
+        todo!()
+    }
+
+    fn visit_i64_modulo(&self) -> Vec<u8> {
+        let lhs = as_i64(&self.lhs);
+        let rhs = as_i64(&self.rhs);
+        let result = lhs % rhs;
+        result.to_le_bytes().to_vec()
+    }
+
+    fn visit_char_modulo(&self) -> Vec<u8> {
+        todo!()
+    }
+}
 
 struct VarMeta {
     ptr: Ptr,
@@ -25,9 +226,10 @@ struct InterpreterStackFrame {
 }
 
 struct InterpreterState {
-    stack: Vec<u8>,
+    memory: Vec<u8>,
     stack_pointer: usize,
     stack_frames: Vec<InterpreterStackFrame>,
+    heap: Heap,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,16 +276,20 @@ impl Ptr {
 
 impl InterpreterState {
     const STACK_SIZE: usize = 1024;
+    const HEAP_SIZE: usize = 1024 * 1024;
     pub fn new() -> Self {
         Self {
-            stack: Vec::with_capacity(Self::STACK_SIZE),
+            memory: vec![0; Self::STACK_SIZE + Self::HEAP_SIZE],
             stack_pointer: 0,
             stack_frames: Vec::new(),
+            heap: Heap::new(
+                Self::HEAP_SIZE
+            ),
         }
     }
 
     pub fn push(&mut self, value: &[u8]) -> Ptr {
-        self.stack.extend_from_slice(value);
+        self.memory[self.stack_pointer..self.stack_pointer + value.len()].copy_from_slice(value);
         self.stack_pointer += value.len();
         Ptr {
             ptr: self.stack_pointer - value.len()
@@ -92,16 +298,16 @@ impl InterpreterState {
 
     pub fn pop(&mut self) -> u8 {
         self.stack_pointer -= 1;
-        self.stack.pop().expect("Stack underflow")
+        self.memory[self.stack_pointer]
     }
 
     pub fn get(&self, ptr: &Ptr, size: usize) -> &[u8] {
-        &self.stack[ptr.as_raw()..ptr.as_raw() + size]
+        &self.memory[ptr.as_raw()..ptr.as_raw() + size]
     }
 
     pub fn store(&mut self, ptr: &Ptr, value: &[u8]) {
         for (i, byte) in value.iter().enumerate() {
-            self.stack[ptr.as_raw() + i] = *byte;
+            self.memory[ptr.as_raw() + i] = *byte;
         }
     }
 
@@ -185,6 +391,72 @@ impl InterpreterState {
     fn current_frame_mut(&mut self) -> &mut InterpreterStackFrame {
         self.stack_frames.last_mut().unwrap()
     }
+
+    pub fn malloc(&mut self, size: usize) -> Ptr {
+        let ptr = self.heap.allocate(size).expect("Out of memory");
+        Ptr {
+            ptr: ptr.as_raw() + Self::STACK_SIZE
+        }
+    }
+
+    pub fn free(&mut self, ptr: &Ptr) {
+        self.heap.free(&Ptr {
+            ptr: ptr.as_raw() - Self::STACK_SIZE
+        }).expect("Tried to free unallocated memory");
+    }
+}
+
+struct Heap {
+    size: usize,
+    allocated_blocks: Vec<HeapBlock>,
+}
+
+struct HeapBlock {
+    start: usize,
+    size: usize,
+}
+
+impl Heap {
+    pub fn new(size: usize) -> Self {
+        Self {
+            size,
+            allocated_blocks: Vec::new(),
+        }
+    }
+
+    pub fn allocate(&mut self, size: usize) -> Option<Ptr> {
+        let mut start = 0;
+        for block in &self.allocated_blocks {
+            if block.start - start >= size {
+                let ptr = Ptr {
+                    ptr: start,
+                };
+                self.allocated_blocks.push(HeapBlock {
+                    start,
+                    size,
+                });
+                return Some(ptr);
+            }
+            start = block.start + block.size;
+        }
+        if self.size - start >= size {
+            let ptr = Ptr {
+                ptr: start,
+            };
+            self.allocated_blocks.push(HeapBlock {
+                start,
+                size,
+            });
+            return Some(ptr);
+        }
+        None
+    }
+
+    pub fn free(&mut self, ptr: &Ptr) -> Option<()> {
+        let index = self.allocated_blocks.iter().position(|block| block.start == ptr.as_raw())?;
+        self.allocated_blocks.remove(index);
+        Some(())
+    }
 }
 
 pub struct Interpreter<'a> {
@@ -203,7 +475,10 @@ impl<'a> Interpreter<'a> {
     }
 
     pub fn print_stats(&self) {
-        println!("Stack size: {}", self.state.stack.len());
+        // for (address, value) in self.state.memory[InterpreterState::STACK_SIZE..InterpreterState::STACK_SIZE + 20].iter().enumerate() {
+        //     println!("{}: {}", address + InterpreterState::STACK_SIZE, value);
+        // }
+        println!();
         println!("Stack pointer: {}", self.state.stack_pointer);
         println!("Stack frames: {}", self.state.stack_frames.len());
     }
@@ -262,10 +537,15 @@ impl<'a> Interpreter<'a> {
                                 print!("{}", str);
                                 Vec::new()
                             }
-                            "itoa" => {
-                                let value = i64::from_le_bytes(self.state.get_var(0).try_into().unwrap());
-                                let str = value.to_string();
-                                self.state.push_str(&str).as_bytes().to_vec()
+                            "malloc" => {
+                                let size = as_i64(self.state.get_var(0)) as usize;
+                                let ptr = self.state.malloc(size);
+                                ptr.as_bytes().to_vec()
+                            }
+                            "free" => {
+                                let ptr: Ptr = self.state.get_var(0).try_into().unwrap();
+                                self.state.free(&ptr);
+                                Vec::new()
                             }
                             _ => {
                                 self.interpret_body(function_body)
@@ -279,53 +559,18 @@ impl<'a> Interpreter<'a> {
                         (value, primary.ty())
                     }
                     InstructionKind::BinaryOp(op, lhs, rhs, ty) => {
-                        let lhs = self.interpret_primary(lhs);
-                        let lhs = self.as_i64(&lhs);
-                        let rhs = self.interpret_primary(rhs);
-                        let rhs = self.as_i64(&rhs);
-                        let value = match op {
-                            HIRBinaryOperator::Add => {
-                                lhs + rhs
-                            }
-                            HIRBinaryOperator::Subtract => {
-                                lhs - rhs
-                            }
-                            HIRBinaryOperator::Multiply => {
-                                lhs * rhs
-                            }
-                            HIRBinaryOperator::Divide => {
-                                lhs / rhs
-                            }
-                            HIRBinaryOperator::LessThanOrEqual => {
-                                if lhs <= rhs {
-                                    1
-                                } else {
-                                    0
-                                }
-                            }
-                            HIRBinaryOperator::Equals => {
-                                if lhs == rhs {
-                                    1
-                                } else {
-                                    0
-                                }
-                            }
-                            HIRBinaryOperator::NotEquals => {
-                                if lhs != rhs {
-                                    1
-                                } else {
-                                    0
-                                }
-                            }
-                            _ => {
-                                unimplemented!("{:?}", op);
-                            }
-                        }.to_le_bytes().to_vec();
+                        let lhs_value = self.interpret_primary(&lhs.0);
+                        let rhs_value = self.interpret_primary(&rhs.0);
+                        let bin_op_interpreter = BinaryOpInterpreter {
+                            lhs: lhs_value,
+                            rhs: rhs_value,
+                        };
+                        let value = op.visit(&bin_op_interpreter, &lhs.1, &rhs.1).expect("Failed to interpret binary operation");
                         (value, ty.clone())
                     }
                     InstructionKind::UnaryOp(op, operand, ty) => {
                         let operand = self.interpret_primary(operand);
-                        let operand = self.as_i64(&operand);
+                        let operand = as_i64(&operand);
                         let value = match op {
                             HIRUnaryOperator::Negate => {
                                 -operand
@@ -370,6 +615,11 @@ impl<'a> Interpreter<'a> {
                         }.to_vec();
                         (value, expr.ty())
                     }
+                    InstructionKind::Cast(expr, ty) => {
+                        let value = self.interpret_primary(expr);
+                        let value = resolve_value_by_type(ty, &value);
+                        (value, ty.clone())
+                    }
                 };
                 if let Some(assign_to) = instruction.assign_to {
                     self.state.save_var(assign_to, ty.layout().size, &return_value);
@@ -397,9 +647,6 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn as_i64(&mut self, value: &[u8]) -> i64 {
-        i64::from_le_bytes(value.try_into().unwrap())
-    }
 
     fn interpret_primary(&mut self, primary: &Primary) -> Vec<u8> {
         match primary {
@@ -419,7 +666,7 @@ impl<'a> Interpreter<'a> {
                 vec![]
             }
             Primary::Char(char) => {
-                self.state.push_char(*char).as_bytes().to_vec()
+                vec![*char as u8]
             }
         }
     }

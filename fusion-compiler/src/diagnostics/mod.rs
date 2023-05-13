@@ -167,9 +167,21 @@ impl DiagnosticsBag {
     pub fn report_cannot_deref(&mut self, span: &TextSpan) {
         self.report_error(format!("Cannot dereference '{}'", span.literal), span.clone());
     }
-    
+
+    pub fn report_cannot_deref_void(&mut self, span: &TextSpan) {
+        self.report_error(format!("Cannot dereference a void pointer"), span.clone());
+    }
+
     pub fn report_invalid_character_literal(&mut self, span: &TextSpan) {
         self.report_error(format!("Invalid character literal '{}'", span.literal), span.clone());
+    }
+
+    pub fn report_cannot_assign_twice_to_immutable_variable(&mut self, span: &TextSpan) {
+        self.report_error(format!("Cannot assign twice to immutable variable '{}'", span.literal), span.clone());
+    }
+
+    pub fn report_cannot_assign_to_immutable_pointer(&mut self, span: &TextSpan) {
+        self.report_error(format!("Cannot assign to immutable pointer '{}'", span.literal), span.clone());
     }
 }
 

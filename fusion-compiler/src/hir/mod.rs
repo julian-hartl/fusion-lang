@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use fusion_compiler::{id, id_generator, Result};
 
-use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTLetStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, TypeSyntax};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTLetStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, TypeSyntax};
 use crate::ast::lexer::Token;
 use crate::ast::visitor::ASTVisitor;
 use crate::diagnostics::DiagnosticsBagCell;
@@ -111,7 +111,13 @@ pub enum HIRExpressionKind {
     Parenthesized(HIRParenthesizedExpression),
     Ref(HIRRefExpression),
     Deref(HIRDerefExpression),
+    Cast(HIRCastExpression),
     Void,
+}
+
+pub struct HIRCastExpression {
+    pub expression: Box<HIRExpression>,
+    pub ty: Type,
 }
 
 pub struct HIRRefExpression {
@@ -155,7 +161,7 @@ pub struct HIRAssignmentTarget {
 pub enum HIRAssignmentTargetKind {
     Variable(VariableId),
     Deref(Box<HIRExpression>),
-    Error
+    Error,
 }
 
 pub struct HIRBinaryExpression {
@@ -186,6 +192,65 @@ impl Display for HIRBinaryOperator {
     }
 }
 
+pub trait HIRBinaryOperatorVisitor<T> {
+    fn visit_i64_add(&self) -> T;
+
+    fn visit_ptr_i64_add(&self, inner_type: &Type) -> T;
+
+    fn visit_char_add(&self) -> T;
+
+    fn visit_i64_subtract(&self) -> T;
+
+    fn visit_ptr_i64_subtract(&self, inner_type: &Type) -> T;
+
+
+    fn visit_char_subtract(&self) -> T;
+
+    fn visit_i64_multiply(&self) -> T;
+
+    fn visit_char_multiply(&self) -> T;
+
+    fn visit_i64_divide(&self) -> T;
+
+    fn visit_char_divide(&self) -> T;
+
+    fn visit_equals(&self, lhs: &Type, rhs: &Type) -> T;
+
+    fn visit_not_equals(&self, lhs: &Type, rhs: &Type) -> T;
+
+    fn visit_i64_less_than(&self) -> T;
+
+    fn visit_char_less_than(&self) -> T;
+
+    fn visit_i64_less_than_or_equal(&self) -> T;
+
+    fn visit_char_less_than_or_equal(&self) -> T;
+
+    fn visit_i64_greater_than(&self) -> T;
+
+    fn visit_char_greater_than(&self) -> T;
+
+    fn visit_i64_greater_than_or_equal(&self) -> T;
+
+    fn visit_char_greater_than_or_equal(&self) -> T;
+
+    fn visit_i64_bitwise_and(&self) -> T;
+
+    fn visit_char_bitwise_and(&self) -> T;
+
+    fn visit_i64_bitwise_or(&self) -> T;
+
+    fn visit_char_bitwise_or(&self) -> T;
+
+    fn visit_i64_bitwise_xor(&self) -> T;
+
+    fn visit_char_bitwise_xor(&self) -> T;
+
+    fn visit_i64_modulo(&self) -> T;
+
+    fn visit_char_modulo(&self) -> T;
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum HIRBinaryOperator {
     Add,
@@ -205,122 +270,134 @@ pub enum HIRBinaryOperator {
 }
 
 
-struct HIRBinaryOperatorDefinition {
-    left: Type,
-    right: Type,
-    result: Type,
-}
-
 impl HIRBinaryOperator {
-    fn definitions(&self) -> Vec<HIRBinaryOperatorDefinition> {
+    pub fn visit<T, V>(&self, visitor: &V, left: &Type, right: &Type) -> Result<T> where V: HIRBinaryOperatorVisitor<T> {
         match self {
-            HIRBinaryOperator::Add => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::I64,
-                },
-            ],
-            HIRBinaryOperator::Subtract => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::I64,
-                },
-            ],
-            HIRBinaryOperator::Multiply => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::I64,
-                },
-            ],
-            HIRBinaryOperator::Divide => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::I64,
-                },
-            ],
-            HIRBinaryOperator::Equals => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::Bool,
-                },
-                HIRBinaryOperatorDefinition {
-                    left: Type::Bool,
-                    right: Type::Bool,
-                    result: Type::Bool,
-                },
-            ],
-            HIRBinaryOperator::NotEquals => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::Bool,
-                },
-                HIRBinaryOperatorDefinition {
-                    left: Type::Bool,
-                    right: Type::Bool,
-                    result: Type::Bool,
-                },
-            ],
-            HIRBinaryOperator::LessThan => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::Bool,
-                },
-            ],
-            HIRBinaryOperator::LessThanOrEqual => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::Bool,
-                },
-            ],
-            HIRBinaryOperator::GreaterThan => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::Bool,
-                },
-            ],
-            HIRBinaryOperator::GreaterThanOrEqual => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::Bool,
-                },
-            ],
-            HIRBinaryOperator::BitwiseAnd => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::I64,
-                },
-            ],
-            HIRBinaryOperator::BitwiseOr => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::I64,
-                },
-            ],
-            HIRBinaryOperator::BitwiseXor => vec![
-                HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::I64,
-                },
-            ],
+            HIRBinaryOperator::Add => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_add()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_add()),
+                    (Type::Ptr(inner,_), Type::I64) => Ok(visitor.visit_ptr_i64_add(&**inner)),
+                    (Type::I64, Type::Ptr(inner,_)) => Ok(visitor.visit_ptr_i64_add(
+                        &**inner
+                    )),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::Subtract => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_subtract()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_subtract()),
+                    (Type::Ptr(inner,_), Type::I64) => Ok(visitor.visit_ptr_i64_subtract(&**inner)),
+                    (Type::I64, Type::Ptr(inner,_)) => Ok(visitor.visit_ptr_i64_subtract(
+                        &**inner
+                    )),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::Multiply => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_multiply()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_multiply()),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::Divide => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_divide()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_divide()),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
             HIRBinaryOperator::Modulo => {
-                vec![HIRBinaryOperatorDefinition {
-                    left: Type::I64,
-                    right: Type::I64,
-                    result: Type::I64,
-                }]
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_modulo()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_modulo()),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::Equals => {
+                match (left, right) {
+                    _ => Ok(visitor.visit_equals(left, right)),
+                }
+            }
+            HIRBinaryOperator::NotEquals => {
+                match (left, right) {
+                    _ => Ok(visitor.visit_not_equals(left, right)),
+                }
+            }
+            HIRBinaryOperator::LessThan => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_less_than()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_less_than()),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::LessThanOrEqual => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_less_than_or_equal()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_less_than_or_equal()),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::GreaterThan => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_greater_than()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_greater_than()),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::GreaterThanOrEqual => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_greater_than_or_equal()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_greater_than_or_equal()),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::BitwiseAnd => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_bitwise_and()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_bitwise_and()),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::BitwiseOr => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_bitwise_or()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_bitwise_or()),
+                    _ => {
+                        Err(())
+                    }
+                }
+            }
+            HIRBinaryOperator::BitwiseXor => {
+                match (left, right) {
+                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_bitwise_xor()),
+                    (Type::Char, Type::Char) => Ok(visitor.visit_char_bitwise_xor()),
+                    _ => {
+                        Err(())
+                    }
+                }
             }
         }
     }
@@ -356,6 +433,13 @@ pub struct HIRUnaryExpression {
     pub operand: Box<HIRExpression>,
 }
 
+pub trait HIRUnaryOperatorVisitor<T> {
+    fn visit_boolean_negate(&self) -> T;
+    fn visit_i64_negate(&self) -> T;
+    fn visit_i64_bitwise_not(&self) -> T;
+    fn visit_char_bitwise_not(&self) -> T;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HIRUnaryOperator {
     Negate,
@@ -381,22 +465,23 @@ impl From<&ASTUnaryOperator> for HIRUnaryOperator {
     }
 }
 
-struct HIRUnaryOperatorDefinition {
-    operand: Type,
-    result: Type,
-}
-
 impl HIRUnaryOperator {
-    fn definitions(&self) -> Vec<HIRUnaryOperatorDefinition> {
+    fn visit<T, V: HIRUnaryOperatorVisitor<T>>(&self, visitor: &V,op: &Type) -> Result<T> {
         match self {
-            HIRUnaryOperator::Negate => vec![HIRUnaryOperatorDefinition {
-                operand: Type::I64,
-                result: Type::I64,
-            }],
-            HIRUnaryOperator::BitwiseNot => vec![HIRUnaryOperatorDefinition {
-                operand: Type::I64,
-                result: Type::I64,
-            }],
+            HIRUnaryOperator::Negate => {
+                match op {
+                    Type::I64 => Ok(visitor.visit_i64_negate()),
+                    Type::Bool => Ok(visitor.visit_boolean_negate()),
+                    _ => Err(()),
+                }
+            }
+            HIRUnaryOperator::BitwiseNot => {
+                match op {
+                    Type::I64 => Ok(visitor.visit_i64_bitwise_not()),
+                    Type::Char => Ok(visitor.visit_char_bitwise_not()),
+                    _ => Err(()),
+                }
+            }
         }
     }
 }
@@ -449,6 +534,7 @@ mod common {
                         name,
                         ty,
                         id,
+                        is_mutable: param.mut_token.is_some(),
                     };
                     variable
                 }
@@ -458,6 +544,7 @@ mod common {
                         name: String::from("self"),
                         ty: Type::Error,
                         id: hir_gen.hir.scope.variable_id_gen.borrow_mut().next(),
+                        is_mutable: false,
                     }
                 }
             }
@@ -495,6 +582,8 @@ mod common {
         let variable_id = hir_gen.hir.scope.declare_variable(
             stmt.identifier.span.literal.clone(),
             ty,
+
+            stmt.mut_token.is_some(),
         );
         HIRVariableDeclarationStatement {
             initializer,
@@ -544,6 +633,7 @@ pub struct Variable {
     pub name: String,
     pub ty: Type,
     pub id: VariableId,
+    pub is_mutable: bool,
 }
 
 id!(FunctionId);
@@ -569,14 +659,14 @@ pub enum FunctionModifier {
 }
 
 struct LocalScope {
-    variables: HashSet<VariableId>,
+    variables: Vec<VariableId>,
     variable_id_gen: Rc<RefCell<VariableIdGenerator>>,
 }
 
 impl LocalScope {
     pub fn new(variable_id_gen: Rc<RefCell<VariableIdGenerator>>) -> Self {
         Self {
-            variables: HashSet::new(),
+            variables: Vec::new(),
             variable_id_gen,
         }
     }
@@ -645,14 +735,15 @@ impl Scope {
         &mut self,
         name: String,
         ty: Type,
+        is_mutable: bool,
     ) -> VariableId {
         let id = self.variable_id_gen.borrow_mut().next();
-        let variable = Variable { name, ty, id };
+        let variable = Variable { name, ty, id, is_mutable };
         let is_shadowing = self.lookup_variable(&variable.name).is_some();
         self.variables.insert(id, variable);
         match self.current_local_scope() {
             Some(local_scope) => {
-                local_scope.variables.insert(id);
+                local_scope.variables.push(id);
             }
             None => {
                 if !is_shadowing {
@@ -670,7 +761,7 @@ impl Scope {
     fn lookup_variable(&self, name: &str) -> Option<VariableId> {
         for local_scope in self.local_scopes.iter().rev() {
             // todo: handle shadowing
-            for var in local_scope.variables.iter() {
+            for var in local_scope.variables.iter().rev() {
                 let var = self.get_variable(var);
                 if var.name == name {
                     return Some(var.id);
@@ -717,7 +808,7 @@ impl Scope {
             self.current_local_scope()
                 .unwrap()
                 .variables
-                .insert(parameter_id);
+                .push(parameter_id);
         }
     }
 
@@ -868,7 +959,7 @@ impl HIRGen {
                 (expr, ty)
             }
             ASTExpressionKind::String(expr) => {
-                let ty = Type::StringSlice();
+                let ty = Type::StringSlice(false);
                 let expr = HIRExpressionKind::Literal(HIRLiteralExpression {
                     value: HIRLiteralValue::String(expr.string.to_string()),
                 });
@@ -878,7 +969,7 @@ impl HIRGen {
                 let left = self.gen_expression(&expr.left);
                 let right = self.gen_expression(&expr.right);
                 let op = HIRBinaryOperator::from(&expr.operator);
-                let ty = self.resolve_bin_op_ty(&left.span, &left.ty, &right.ty, &op);
+                let ty = self.resolve_bin_op_ty(&expr.operator.token.span, &left.ty, &right.ty, &op);
                 let expr = HIRExpressionKind::Binary(HIRBinaryExpression {
                     left: Box::new(left),
                     right: Box::new(right),
@@ -927,9 +1018,16 @@ impl HIRGen {
                 let (target, ty) = match hir_expr.kind {
                     HIRExpressionKind::Variable(variable_expr) => {
                         let variable = self.hir.scope.get_variable(&variable_expr.variable_id);
+                        if !variable.is_mutable {
+                            self.diagnostics_bag.borrow_mut().report_cannot_assign_twice_to_immutable_variable(&expr.assignee.span());
+                        }
                         (HIRAssignmentTargetKind::Variable(variable_expr.variable_id), variable.ty.clone())
                     }
                     HIRExpressionKind::Deref(deref_expr) => {
+                        let is_mutable = self.is_expr_mutable(&deref_expr.expression);
+                        if !is_mutable {
+                            self.diagnostics_bag.borrow_mut().report_cannot_assign_to_immutable_pointer(&expr.assignee.span());
+                        }
                         (HIRAssignmentTargetKind::Deref(Box::new(*deref_expr.expression)), hir_expr.ty.deref().unwrap_or(Type::Error))
                     }
                     _ => {
@@ -941,7 +1039,7 @@ impl HIRGen {
                 let value_ty = value.ty.clone();
                 self.ensure_type_match(&value.span, &value.ty, &ty);
                 let expr = HIRExpressionKind::Assignment(HIRAssignmentExpression {
-                    target:HIRAssignmentTarget {
+                    target: HIRAssignmentTarget {
                         kind: target,
                         span: expr.assignee.span(),
                     },
@@ -969,7 +1067,7 @@ impl HIRGen {
                             let param = &function.parameters.get(i);
                             if let Some(param) = param {
                                 let param = self.hir.scope.get_variable(&param);
-                                self.ensure_type_match(&arg.span, &param.ty, &arg.ty);
+                                self.ensure_type_match(&arg.span, &arg.ty, &param.ty);
                             }
                         }
                         function.return_type.clone()
@@ -992,7 +1090,7 @@ impl HIRGen {
             }
             ASTExpressionKind::Ref(expr) => {
                 let inner = self.gen_expression(&expr.expr);
-                let ty = Type::Ptr(Box::new(inner.ty.clone()));
+                let ty = Type::Ptr(Box::new(inner.ty.clone()), expr.mut_token.is_some());
                 let expr = HIRExpressionKind::Ref(HIRRefExpression {
                     expression: Box::new(inner),
                 });
@@ -1001,7 +1099,10 @@ impl HIRGen {
             ASTExpressionKind::Deref(expr) => {
                 let inner = self.gen_expression(&expr.expr);
                 let ty = match &inner.ty {
-                    Type::Ptr(ty) => {
+                    Type::Ptr(ty,_) => {
+                        if **ty == Type::Void {
+                            self.diagnostics_bag.borrow_mut().report_cannot_deref_void(&expr.expr.span());
+                        }
                         *ty.clone()
                     }
                     _ => {
@@ -1021,11 +1122,46 @@ impl HIRGen {
                 });
                 (expr, ty)
             }
+            ASTExpressionKind::Cast(expr) => {
+                let inner = self.gen_expression(&expr.expr);
+                let ty = self.resolve_type(&expr.ty);
+                // todo: introduce cast matrix
+                let expr = HIRExpressionKind::Cast(HIRCastExpression {
+                    expression: Box::new(inner),
+                    ty: ty.clone(),
+                });
+                (expr, ty)
+            }
         };
         HIRExpression {
             kind,
             ty,
             span: expr.span(),
+        }
+    }
+
+    fn is_expr_mutable(&self, expr: &HIRExpression) -> bool {
+        match &expr.kind {
+            HIRExpressionKind::Parenthesized(expr) => {
+                self.is_expr_mutable(&expr.expression)
+            }
+            HIRExpressionKind::Variable(expr) => {
+                let variable = self.hir.scope.get_variable(&expr.variable_id);
+                match &variable.ty {
+                    Type::Ptr(inner, is_mutable) => {
+                        *is_mutable
+                    }
+                    _ => {
+                        true
+                    }
+                }
+            }
+            HIRExpressionKind::Deref(expr) => {
+                self.is_expr_mutable(&expr.expression)
+            }
+            _ => {
+                true
+            }
         }
     }
 
@@ -1052,44 +1188,178 @@ impl HIRGen {
 
     fn resolve_type(&mut self, ty_syntax: &TypeSyntax) -> Type {
         if let Some(ty) = self.hir.scope.resolve_type_from_identifier(&ty_syntax.name) {
-            return if ty_syntax.star.is_some() {
-                Type::Ptr(Box::new(ty))
+            return if let Some(ptr) = &ty_syntax.ptr {
+                Type::Ptr(Box::new(ty), ptr.mut_token.is_some())
             } else {
                 ty
-            }
+            };
         }
         self.diagnostics_bag.borrow_mut().report_undeclared_type(&ty_syntax.name);
         Type::Error
     }
 
-    fn ensure_type_match(&self, actual_span: &TextSpan, actual: &Type, expected: &Type) -> Type {
+    fn ensure_type_match<'a>(&self, actual_span: &TextSpan, actual: &'a Type, expected: &'a Type) -> &'a Type {
         if actual.is_assignable_to(expected) {
-            return expected.clone();
+            return expected;
         }
-        self.diagnostics_bag.borrow_mut().report_type_mismatch(actual_span, actual, expected);
-        expected.clone()
+        self.diagnostics_bag.borrow_mut().report_type_mismatch(actual_span, expected, actual);
+        expected
     }
 
     fn resolve_bin_op_ty(&self, span: &TextSpan, left: &Type, right: &Type, op: &HIRBinaryOperator) -> Type {
-        let definitions = op.definitions();
-        for definition in definitions {
-            if left.is_assignable_to(&definition.left) && right.is_assignable_to(&definition.right) {
-                return definition.result;
+        let result_type_visitor = ResultTypeVisitor;
+        match op.visit(&result_type_visitor, left, right) {
+            Ok(ty) => ty,
+            Err(_) => {
+                self.diagnostics_bag.borrow_mut().report_binary_operator_mismatch(span, left, right);
+                Type::Error
             }
         }
-        self.diagnostics_bag.borrow_mut().report_binary_operator_mismatch(span, left, right);
-        Type::Error
     }
 
     fn resolve_un_op_ty(&self, span: &TextSpan, operand: &Type, op: &HIRUnaryOperator) -> Type {
-        let definitions = op.definitions();
-        for definition in definitions {
-            if operand.is_assignable_to(&definition.operand) {
-                return definition.result;
+        let result_type_visitor = ResultTypeVisitor;
+        match op.visit(&result_type_visitor, operand) {
+            Ok(ty) => ty,
+            Err(_) => {
+                self.diagnostics_bag.borrow_mut().report_unary_operator_mismatch(span, operand);
+                Type::Error
             }
         }
-        self.diagnostics_bag.borrow_mut().report_unary_operator_mismatch(span, operand);
-        Type::Error
+    }
+}
+
+struct ResultTypeVisitor;
+
+impl HIRUnaryOperatorVisitor<Type> for ResultTypeVisitor {
+    fn visit_boolean_negate(&self) -> Type {
+        Type::Bool
+    }
+
+    fn visit_i64_negate(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_i64_bitwise_not(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_char_bitwise_not(&self) -> Type {
+        Type::Char
+    }
+}
+
+impl HIRBinaryOperatorVisitor<Type> for ResultTypeVisitor {
+    fn visit_i64_add(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_ptr_i64_add(&self, inner: &Type) -> Type {
+        Type::Ptr(Box::new(inner.clone()), false)
+    }
+
+    fn visit_char_add(&self) -> Type {
+        Type::Char
+    }
+
+    fn visit_i64_subtract(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_ptr_i64_subtract(&self, inner_type: &Type) -> Type {
+        Type::Ptr(Box::new(inner_type.clone()), false)
+    }
+
+    fn visit_char_subtract(&self) -> Type {
+        Type::Char
+    }
+
+    fn visit_i64_multiply(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_char_multiply(&self) -> Type {
+        Type::Char
+    }
+
+    fn visit_i64_divide(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_char_divide(&self) -> Type {
+        Type::Char
+    }
+
+    fn visit_equals(&self, lhs: &Type, rhs: &Type) -> Type {
+        Type::Bool
+    }
+
+    fn visit_not_equals(&self, lhs: &Type, rhs: &Type) -> Type {
+        Type::Bool
+    }
+
+    fn visit_i64_less_than(&self) -> Type {
+        Type::Bool
+    }
+
+    fn visit_char_less_than(&self) -> Type {
+        Type::Bool
+    }
+
+    fn visit_i64_less_than_or_equal(&self) -> Type {
+        Type::Bool
+    }
+
+    fn visit_char_less_than_or_equal(&self) -> Type {
+        Type::Bool
+    }
+
+    fn visit_i64_greater_than(&self) -> Type {
+        Type::Bool
+    }
+
+    fn visit_char_greater_than(&self) -> Type {
+        Type::Bool
+    }
+
+    fn visit_i64_greater_than_or_equal(&self) -> Type {
+        Type::Bool
+    }
+
+    fn visit_char_greater_than_or_equal(&self) -> Type {
+        Type::Bool
+    }
+
+    fn visit_i64_bitwise_and(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_char_bitwise_and(&self) -> Type {
+        Type::Char
+    }
+
+    fn visit_i64_bitwise_or(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_char_bitwise_or(&self) -> Type {
+        Type::Char
+    }
+
+    fn visit_i64_bitwise_xor(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_char_bitwise_xor(&self) -> Type {
+        Type::Char
+    }
+
+    fn visit_i64_modulo(&self) -> Type {
+        Type::I64
+    }
+
+    fn visit_char_modulo(&self) -> Type {
+        Type::Char
     }
 }
 
@@ -1116,17 +1386,19 @@ impl ASTVisitor for HIRGlobalSymbolGatherer<'_> {
         self.global_initializers.push((variable_declaration_stmt.variable_id, variable_declaration_stmt.initializer));
     }
 
-    fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression) {
+    fn visit_cast_expression(&mut self, cast_expression: &ASTCastExpression, expr: &ASTExpression) {}
 
-    }
+    fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression) {}
 
-    fn visit_deref_expression(&mut self, deref_expression: &ASTDerefExpression) {
-    }
+    fn visit_deref_expression(&mut self, deref_expression: &ASTDerefExpression) {}
 
-    fn visit_ref_expression(&mut self, ref_expression: &ASTRefExpression) {
-    }
+    fn visit_ref_expression(&mut self, ref_expression: &ASTRefExpression) {}
 
     fn visit_string_expression(&mut self, string_expression: &ASTStringExpression, expr: &ASTExpression) {}
+
+    fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression, expr: &ASTExpression) {
+        todo!()
+    }
 
     fn visit_identifier_expression(&mut self, variable_expression: &ASTIdentifierExpression, expr: &ASTExpression) {}
 
