@@ -2,6 +2,7 @@ use crate::hir::Scope;
 use crate::mir::MIR;
 
 pub mod llvm;
+pub mod x86;
 
 
 pub trait Codegen {

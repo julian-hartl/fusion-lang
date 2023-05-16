@@ -1,4 +1,4 @@
-use crate::hir::{FunctionId, HIR, HIRAssignmentExpression, HIRBinaryExpression, HIRBinaryOperator, HIRBlockStatement, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRExpression, HIRExpressionKind, HIRExpressionStatement, HIRIfStatement, HIRLiteralExpression, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStatementKind, HIRUnaryExpression, HIRUnaryOperator, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
+use crate::hir::{FunctionId, HIR, HIRAssignmentExpression, HIRBinaryExpression, HIRBinaryOperator, HIRBlockStatement, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRExpression, HIRExpressionKind, HIRExpressionStatement, HIRIfStatement, HIRLiteralExpression, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStatementKind, HIRStructInitExpression, HIRUnaryExpression, HIRUnaryOperator, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
 
 pub trait HIRVisitor {
     fn visit(&mut self, hir: &HIR) {
@@ -80,7 +80,7 @@ pub trait HIRVisitor {
             HIRExpressionKind::Call(expr) => {
                 self.visit_call_expr(expr);
             }
-            HIRExpressionKind::MemberAccess(_) => {}
+            HIRExpressionKind::FieldAccess(_) => {}
             HIRExpressionKind::Parenthesized(expr) => {
                 self.visit_parenthesized_expr(expr);
             }
@@ -96,9 +96,13 @@ pub trait HIRVisitor {
             HIRExpressionKind::Cast(expr) => {
                 self.visit_cast_expr(expr);
             }
+            HIRExpressionKind::StructInit(expr) => {
+                self.visit_struct_init_expr(expr);
+            }
         }
     }
 
+    fn visit_struct_init_expr(&mut self, expr: &HIRStructInitExpression);
     fn visit_cast_expr(&mut self, expr: &HIRCastExpression);
     fn visit_ref_expr(&mut self, expr: &HIRRefExpression);
     fn visit_deref_expr(&mut self, expr: &HIRDerefExpression);

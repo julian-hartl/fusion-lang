@@ -17,11 +17,12 @@ pub mod printer;
 #[derive(Debug, Clone)]
 pub struct Ast {
     pub statements: Vec<ASTStatement>,
+    pub structs: Vec<Token>,
 }
 
 impl Ast {
     pub fn new() -> Self {
-        Self { statements: Vec::new() }
+        Self { statements: Vec::new(), structs: Vec::new() }
     }
 
 
@@ -33,7 +34,7 @@ impl Ast {
 
     pub fn let_statement(&mut self, mut_token: Option<Token>, identifier: Token, initializer: ASTExpression, type_annotation: Option<StaticTypeAnnotation>) -> ASTStatement {
         ASTStatement::new(
-            ASTStatementKind::Let(ASTLetStatement { mut_token,identifier, initializer, type_annotation }))
+            ASTStatementKind::Let(ASTLetStatement { mut_token, identifier, initializer, type_annotation }))
     }
 
     pub fn if_statement(&mut self, if_keyword: Token, condition: ASTExpression, then: ASTStatement, else_statement: Option<ASTElseStatement>) -> ASTStatement {
@@ -63,6 +64,10 @@ impl Ast {
         ASTStatement::new(ASTStatementKind::FuncDecl(ASTFuncDeclStatement { identifier, parameters, body, return_type, modifier_tokens, func_token }))
     }
 
+
+    pub fn struct_decl_statement(&mut self, struct_token: Token, identifier: Token, fields: Vec<ASTStructField>, open_brace: Token, close_brace: Token) -> ASTStatement {
+        ASTStatement::new(ASTStatementKind::StructDecl(ASTStructDeclStatement { struct_token, identifier, fields, open_brace, close_brace }))
+    }
 
     pub fn number_expression(&mut self, token: Token, number: i64) -> ASTExpression {
         ASTExpression::new(ASTExpressionKind::Number(ASTNumberExpression { number, token }))
@@ -101,7 +106,7 @@ impl Ast {
     }
 
     pub fn ref_expression(&mut self, ampersand: Token, mut_token: Option<Token>, expression: ASTExpression) -> ASTExpression {
-        ASTExpression::new(ASTExpressionKind::Ref(ASTRefExpression { mut_token,ampersand, expr: Box::new(expression) }))
+        ASTExpression::new(ASTExpressionKind::Ref(ASTRefExpression { mut_token, ampersand, expr: Box::new(expression) }))
     }
 
     pub fn deref_expression(&mut self, star: Token, expression: ASTExpression) -> ASTExpression {
@@ -114,6 +119,14 @@ impl Ast {
 
     pub fn cast_expression(&mut self, expression: ASTExpression, as_keyword: Token, ty: TypeSyntax) -> ASTExpression {
         ASTExpression::new(ASTExpressionKind::Cast(ASTCastExpression { as_keyword, expr: Box::new(expression), ty }))
+    }
+
+    pub fn member_access_expression(&mut self, expression: ASTExpression, access_operator: Token, member: Token) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::MemberAccess(ASTMemberAccessExpression { expr: Box::new(expression), access_operator, member }))
+    }
+
+    pub fn struct_init_expression(&mut self, identifier: Token, open_brace: Token, fields: Vec<ASTStructInitField>, close_brace: Token) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::StructInit(ASTStructInitExpression { identifier, open_brace, fields, close_brace }))
     }
 
     pub fn error_expression(&mut self, span: TextSpan) -> ASTExpression {
@@ -144,6 +157,22 @@ pub enum ASTStatementKind {
     While(ASTWhileStatement),
     FuncDecl(ASTFuncDeclStatement),
     Return(ASTReturnStatement),
+    StructDecl(ASTStructDeclStatement),
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTStructDeclStatement {
+    pub struct_token: Token,
+    pub identifier: Token,
+    pub open_brace: Token,
+    pub close_brace: Token,
+    pub fields: Vec<ASTStructField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTStructField {
+    pub identifier: Token,
+    pub ty: StaticTypeAnnotation,
 }
 
 
@@ -165,6 +194,7 @@ pub struct TypeSyntax {
     pub name: Token,
     pub ptr: Option<PtrSyntax>,
 }
+
 #[derive(Debug, Clone)]
 pub struct PtrSyntax {
     pub star: Token,
@@ -417,6 +447,17 @@ impl ASTStatement {
                     spans
                 )
             }
+            ASTStatementKind::StructDecl(stmt) => {
+                let spans = vec![
+                    &stmt.struct_token.span,
+                    &stmt.identifier.span,
+                    &stmt.open_brace.span,
+                    &stmt.close_brace.span,
+                ];
+                TextSpan::merge(
+                    spans
+                )
+            }
         }
     }
 }
@@ -463,9 +504,49 @@ pub enum ASTExpressionKind {
     Cast(
         ASTCastExpression
     ),
+    MemberAccess(
+        ASTMemberAccessExpression
+    ),
+    StructInit(
+        ASTStructInitExpression
+    ),
     Error(
         TextSpan
     ),
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTStructInitExpression {
+    pub identifier: Token,
+    pub open_brace: Token,
+    pub close_brace: Token,
+    pub fields: Vec<ASTStructInitField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTStructInitField {
+    pub identifier: Token,
+    pub colon: Token,
+    pub initializer: Box<ASTExpression>,
+}
+
+impl ASTStructInitField {
+    pub fn span(&self) -> TextSpan {
+        TextSpan::merge(
+            vec![
+                &self.identifier.span,
+                &self.colon.span,
+                &self.initializer.span(),
+            ]
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTMemberAccessExpression {
+    pub expr: Box<ASTExpression>,
+    pub access_operator: Token,
+    pub member: Token,
 }
 
 #[derive(Debug, Clone)]
@@ -793,6 +874,22 @@ impl ASTExpression {
                 let span2 = &expr.ty.span();
                 let span3 = expr.expr.span();
                 TextSpan::merge(vec![&span1, &span2, &span3])
+            }
+            ASTExpressionKind::MemberAccess(expr) => {
+                let span1 = expr.expr.span();
+                let span2 = &expr.access_operator.span;
+                let span3 = &expr.member.span;
+                TextSpan::merge(vec![&span1, &span2, &span3])
+            }
+            ASTExpressionKind::StructInit(expr) => {
+                let span2 = &expr.open_brace.span;
+                let span3 = &expr.close_brace.span;
+                let mut spans = vec![span2, span3];
+                let field_spans: Vec<TextSpan> = expr.fields.iter().map(|field| field.span()).collect();
+                for span in &field_spans {
+                    spans.push(span);
+                }
+                TextSpan::merge(spans)
             }
         }
     }

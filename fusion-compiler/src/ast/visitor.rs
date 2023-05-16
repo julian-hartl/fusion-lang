@@ -1,5 +1,5 @@
 use termion::color::{Fg, Reset};
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement, ASTDerefExpression, ASTRefExpression, ASTCharExpression, ASTCastExpression};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement, ASTDerefExpression, ASTRefExpression, ASTCharExpression, ASTCastExpression, ASTStructDeclStatement, ASTMemberAccessExpression, ASTStructInitExpression};
 use crate::text::span::TextSpan;
 use crate::ast::printer::ASTPrinter;
 
@@ -30,8 +30,13 @@ pub trait ASTVisitor {
             ASTStatementKind::Return(return_stmt) => {
                 self.visit_return_statement(return_stmt, &statement);
             }
+            ASTStatementKind::StructDecl(struct_decl_stmt) => {
+                self.visit_struct_decl_statement(struct_decl_stmt);
+            }
         }
     }
+
+    fn visit_struct_decl_statement(&mut self, struct_decl_stmt: &ASTStructDeclStatement);
 
     fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement);
 
@@ -108,8 +113,18 @@ pub trait ASTVisitor {
             ASTExpressionKind::Cast(expr) => {
                 self.visit_cast_expression(expr, &expression);
             }
+            ASTExpressionKind::MemberAccess(expr) => {
+                self.visit_member_access_expression(expr, &expression);
+            }
+            ASTExpressionKind::StructInit(expr) => {
+                self.visit_struct_init_expression(expr, &expression);
+            }
         }
     }
+
+    fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression);
+
+    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression);
 
     fn visit_cast_expression(&mut self, cast_expression: &ASTCastExpression, expr: &ASTExpression);
 

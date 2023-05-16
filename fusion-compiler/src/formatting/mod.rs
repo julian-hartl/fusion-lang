@@ -1,4 +1,4 @@
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStringExpression, ASTUnaryExpression, ASTWhileStatement, FuncDeclParameter};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTMemberAccessExpression, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTWhileStatement, FuncDeclParameter};
 use crate::ast::visitor::ASTVisitor;
 use crate::text::span::TextSpan;
 
@@ -57,6 +57,28 @@ impl ASTVisitor for Formatter<'_> {
         self.ast
     }
 
+    fn visit_struct_decl_statement(&mut self, struct_decl_stmt: &ASTStructDeclStatement) {
+        self.write("struct");
+        self.whitespace();
+        self.write(&struct_decl_stmt.identifier.span.literal);
+        self.write(" {");
+        self.new_line();
+        self.indent();
+        for (i, field) in struct_decl_stmt.fields.iter().enumerate() {
+            self.write_indent();
+            self.write(&field.identifier.span.literal);
+            self.write(":");
+            self.whitespace();
+            self.write(format!("{}", &field.ty.ty).as_str());
+            if i < struct_decl_stmt.fields.len() - 1 {
+                self.write(",");
+            }
+            self.new_line();
+        }
+        self.dedent();
+        self.write("}");
+        self.new_line();
+    }
 
 
     fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement) {
@@ -166,6 +188,28 @@ impl ASTVisitor for Formatter<'_> {
         self.write_indent();
         self.do_visit_statement(statement);
         self.new_line();
+    }
+
+    fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression) {
+        self.write(&struct_init_expression.identifier.span.literal);
+        self.write("{");
+        for (i, field_init) in struct_init_expression.fields.iter().enumerate() {
+            self.write(&field_init.identifier.span.literal);
+            self.write(":");
+            self.whitespace();
+            self.visit_expression(&field_init.initializer);
+            if i < struct_init_expression.fields.len() - 1 {
+                self.write(",");
+                self.whitespace();
+            }
+        }
+        self.write("}");
+    }
+
+    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression) {
+        self.visit_expression(&member_access_expression.expr);
+        self.write(".");
+        self.write(&member_access_expression.member.span.literal);
     }
 
     fn visit_cast_expression(&mut self, cast_expression: &ASTCastExpression, expr: &ASTExpression) {

@@ -1,34 +1,39 @@
 use std::fmt::format;
 use std::ops::Not;
 
-use crate::hir::{HIR, HIRAssignmentExpression, HIRAssignmentTargetKind, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
+use crate::hir::{HIR, HIRAssignmentExpression, HIRAssignmentTargetKind, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStructInitExpression, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement, Scope, ScopeCell};
 use crate::hir::visitor::HIRVisitor;
 
 pub struct HIRVisualizer<'a> {
     output: String,
     indent: usize,
     hir: &'a HIR,
+    scope: ScopeCell
 }
 
 impl<'a> HIRVisualizer<'a> {
     pub fn new(
         hir: &'a HIR,
+        scope: ScopeCell,
     ) -> Self {
         HIRVisualizer {
             output: String::new(),
             indent: 0,
             hir,
+            scope,
         }
     }
 
     pub fn visualize(mut self) -> String {
+        let scope = self.scope.clone();
+        let scope_ref = scope.borrow();
         for global in self.hir.globals.iter() {
             match global {
                 HIRGlobal::Variable {
                     id,
                     initializer
                 } => {
-                    let variable = self.hir.scope.get_variable(id);
+                    let variable = scope_ref.get_variable(id);
                     self.write("let");
                     self.write_whitespace();
                     if variable.is_mutable {
@@ -48,14 +53,14 @@ impl<'a> HIRVisualizer<'a> {
                 }
             }
         }
-        for (function, body) in self.hir.functions() {
+        for (function, body) in self.hir.functions(&scope_ref) {
             self.write("func");
             self.write_whitespace();
             self.write(&function.name);
             if !function.parameters.is_empty() {
                 self.write("(");
                 for (i, parameter_id) in function.parameters.iter().enumerate() {
-                    let parameter = self.hir.scope.get_variable(parameter_id);
+                    let parameter = scope_ref.get_variable(parameter_id);
                     let param = format!("{}: {}", parameter.name, parameter.ty);
                     let param = param.as_str();
                     if i == 0 {
@@ -140,7 +145,9 @@ impl HIRVisitor for HIRVisualizer<'_> {
     fn visit_variable_declaration_stmt(&mut self, stmt: &HIRVariableDeclarationStatement) {
         self.write("let");
         self.write_whitespace();
-        let variable = self.hir.scope.get_variable(&stmt.variable_id);
+        let scope = self.scope.clone();
+        let scope_ref = scope.borrow();
+        let variable = scope_ref.get_variable(&stmt.variable_id);
         if variable.is_mutable {
             self.write("mut");
             self.write_whitespace();
@@ -212,14 +219,18 @@ impl HIRVisitor for HIRVisualizer<'_> {
     }
 
     fn visit_variable_expr(&mut self, expr: &HIRVariableExpression) {
-        let variable = self.hir.scope.get_variable(&expr.variable_id);
+        let scope = self.scope.clone();
+        let scope_ref = scope.borrow();
+        let variable = scope_ref.get_variable(&expr.variable_id);
         self.write(&variable.name);
     }
 
     fn visit_assignment_expr(&mut self, expr: &HIRAssignmentExpression) {
         match &expr.target.kind {
             HIRAssignmentTargetKind::Variable(variable_id) => {
-                let variable = self.hir.scope.get_variable(variable_id);
+                let scope = self.scope.clone();
+                let scope_ref = scope.borrow();
+                let variable = scope_ref.get_variable(variable_id);
                 self.write(&variable.name)
             }
             HIRAssignmentTargetKind::Deref(expr) => {
@@ -227,6 +238,14 @@ impl HIRVisitor for HIRVisualizer<'_> {
                 self.visit_expr(expr);
             }
             HIRAssignmentTargetKind::Error => {}
+            HIRAssignmentTargetKind::Field(id, target) => {
+                self.visit_expr(target);
+                self.write(".");
+                let scope = self.scope.clone();
+                let scope_ref = scope.borrow();
+                let field = scope_ref.get_field(id);
+                self.write(&field.name);
+            }
         };
         self.write_whitespace();
         self.write("=");
@@ -235,18 +254,21 @@ impl HIRVisitor for HIRVisualizer<'_> {
     }
 
     fn visit_call_expr(&mut self, expr: &HIRCallExpression) {
-        let function = match &expr.callee {
+        match &expr.callee {
             HIRCallee::Function(id) => {
-                self.hir.scope.get_function(id)
+                let scope = self.scope.clone();
+                let scope_ref = scope.borrow();
+                let function = scope_ref.get_function(id);
+                self.write(&function.name);
             }
-            HIRCallee::Undeclared => {
-                unreachable!()
+            HIRCallee::Undeclared(name) => {
+                self.write(name);
             }
-            HIRCallee::Invalid => {
-                unreachable!()
+            HIRCallee::Invalid(expr) => {
+                self.visit_expr(expr);
             }
         };
-        self.write(&function.name);
+
         self.write("(");
         for (i, arg) in expr.arguments.iter().enumerate() {
             self.visit_expr(arg);
@@ -287,5 +309,25 @@ impl HIRVisitor for HIRVisualizer<'_> {
     fn visit_cast_expr(&mut self, expr: &HIRCastExpression) {
         self.visit_expr(&expr.expression);
         self.write(format!(" as {}", expr.ty).as_str());
+    }
+
+    fn visit_struct_init_expr(&mut self, expr: &HIRStructInitExpression) {
+        let scope = self.scope.clone();
+        let scope_ref = scope.borrow();
+        let struct_ =scope_ref.get_struct(&expr.struct_id);
+        self.write(&struct_.name);
+        self.write("{");
+        for (i, field) in expr.fields.iter().enumerate() {
+            let field_name = &scope_ref.get_field(&field.field_id).name;
+            self.write(&field_name);
+            self.write(":");
+            self.write_whitespace();
+            self.visit_expr(&field.value);
+            if i < expr.fields.len() - 1 {
+                self.write(",");
+                self.write_whitespace();
+            }
+        }
+        self.write("}");
     }
 }

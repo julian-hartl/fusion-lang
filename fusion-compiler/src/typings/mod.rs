@@ -2,6 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::ops::DerefMut;
 
 use crate::ast::lexer::TokenKind;
+use crate::hir::{Scope, StructId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionType {
@@ -30,19 +31,20 @@ pub enum Type {
     Char,
     Void,
     Ptr(Box<Type>, bool),
+    Struct(StructId),
     Function(FunctionType),
     Unresolved,
     Error,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Layout {
-    pub size: usize,
-    pub alignment: usize,
+    pub size: u32,
+    pub alignment: u32,
 }
 
 impl Layout {
-    pub const POINTER_SIZE: usize = 8;
+    pub const POINTER_SIZE: u32 = 8;
 }
 
 impl Display for Type {
@@ -66,6 +68,10 @@ impl Display for Type {
                 }
             }
             Type::Char => write!(f, "char"),
+            Type::Struct(id) => {
+                // todo: use the name of the struct
+                write!(f, "{:?}", id)
+            }
         }
     }
 }
@@ -112,7 +118,7 @@ impl Type {
         }
     }
 
-    pub fn layout(&self) -> Layout {
+    pub fn layout(&self, scope: &Scope) -> Layout {
         match self {
             Type::I64 => Layout {
                 size: 8,
@@ -134,6 +140,10 @@ impl Type {
                 size: 1,
                 alignment: 1,
             },
+            Type::Struct(id) => {
+                let struct_ = scope.get_struct(id);
+                struct_.layout(scope)
+            }
             _ => unimplemented!("layout for type {:?}", self),
         }
     }

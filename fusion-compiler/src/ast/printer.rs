@@ -94,6 +94,24 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.ast
     }
 
+    fn visit_struct_decl_statement(&mut self, struct_decl_stmt: &ASTStructDeclStatement) {
+        self.add_keyword("struct");
+        self.add_whitespace();
+        self.add_text(&struct_decl_stmt.identifier.span.literal);
+        self.add_whitespace();
+        self.add_text("{");
+        self.add_newline();
+        self.indent += 1;
+        for field in &struct_decl_stmt.fields {
+            self.add_padding();
+            self.add_text(&field.identifier.span.literal);
+            self.add_type_annotation(&field.ty);
+            self.add_newline();
+        }
+        self.indent -= 1;
+        self.add_padding();
+        self.add_text("}");
+    }
 
 
     fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement) {
@@ -193,6 +211,28 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.result.push_str(&format!("{}\n",
                                       Fg(Reset),
         ));
+    }
+
+    fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression) {
+        self.add_text(&struct_init_expression.identifier.span.literal);
+        self.add_text("{");
+        for (i, field_init) in struct_init_expression.fields.iter().enumerate() {
+            if i != 0 {
+                self.add_text(",");
+                self.add_whitespace();
+            }
+            self.add_text(&field_init.identifier.span.literal);
+            self.add_text(":");
+            self.add_whitespace();
+            self.visit_expression(&field_init.initializer);
+        }
+        self.add_text("}");
+    }
+
+    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression) {
+        self.visit_expression(&member_access_expression.expr);
+        self.add_text(".");
+        self.add_text(&member_access_expression.member.span.literal);
     }
 
     fn visit_cast_expression(&mut self, cast_expression: &ASTCastExpression, expr: &ASTExpression) {

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::Write;
+use std::ops::Deref;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -13,7 +14,7 @@ use crate::ast::parser::Parser;
 use crate::diagnostics::{DiagnosticsBag, DiagnosticsBagCell};
 use crate::diagnostics::printer::DiagnosticsPrinter;
 use crate::formatting::Formatter;
-use crate::hir::{HIR, HIRGen};
+use crate::hir::{HIR, HIRGen, Scope};
 use crate::mir::{MIR, MIRGen};
 use crate::text;
 use crate::text::SourceText;
@@ -43,25 +44,35 @@ impl CompilationUnit {
         ast.visualize();
 
         Self::check_diagnostics(&source_text, &diagnostics_bag)?;
-
-        let hir_gen = HIRGen::new(Rc::clone(&diagnostics_bag));
+        let scope: Rc<RefCell<Scope>> = Rc::new(RefCell::new(Scope::new()));
+        let hir_gen = HIRGen::new(Rc::clone(&diagnostics_bag),scope.clone());
         let hir = hir_gen.gen(&ast);
-        hir.visualize();
+        hir.visualize(scope.clone());
         Self::check_diagnostics(&source_text, &diagnostics_bag).map_err(|_| Rc::clone(&diagnostics_bag))?;
         // if let Some(path) = &source_text.path {
         //     Self::format(&ast, &Path::new(path.as_str())).expect("Failed to format AST");
         // }
         let mir_gen = MIRGen::new(
             Rc::clone(&diagnostics_bag),
-            &hir.scope
+            scope.clone(),
         );
-        let mut mir = mir_gen.construct(&hir);
+        let mir = mir_gen.construct(&hir);
         mir.output_graphviz(
-            &hir,
+            scope.borrow().deref(),
             "mir.dot",
         );
+        mir.save_output(
+            &scope.borrow(),
+            "mir.txt",
+        );
         Self::check_diagnostics(&source_text, &diagnostics_bag)?;
-        mir.interpret(&hir.scope);
+        let x86_gen = crate::codegen::x86::X86Codegen::new(
+            &mir,
+            scope.clone()
+        );
+        let asm = x86_gen.gen();
+        let mut file = File::create("out.s").expect("Failed to create file");
+        file.write_all(asm.as_bytes()).expect("Failed to write to file");
         // Target::initialize_aarch64(&InitializationConfig::default());
         //
         // let context = inkwell::context::Context::create();

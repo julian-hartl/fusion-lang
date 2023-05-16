@@ -183,6 +183,30 @@ impl DiagnosticsBag {
     pub fn report_cannot_assign_to_immutable_pointer(&mut self, span: &TextSpan) {
         self.report_error(format!("Cannot assign to immutable pointer '{}'", span.literal), span.clone());
     }
+
+    pub fn report_struct_already_declared(&mut self, token: &Token) {
+        self.report_error(format!("Struct '{}' already declared", token.span.literal), token.span.clone());
+    }
+
+    pub fn report_struct_has_no_member(&mut self, span: &TextSpan, struct_name: &String) {
+        self.report_error(format!("Struct '{}' has no member '{}'", struct_name, span.literal), span.clone());
+    }
+
+    pub fn report_cannot_access_member_of_non_struct(&mut self, span: &TextSpan, ty: &Type) {
+        self.report_error(format!("Cannot access member '{}' of non-struct '{}'", span.literal, ty), span.clone());
+    }
+
+    pub fn report_cannot_assign_to_immutable_field(&mut self, span: &TextSpan) {
+        self.report_error(format!("Cannot assign to immutable field '{}'", span.literal), span.clone());
+    }
+
+    pub fn report_cannot_access_non_ptr(&mut self, span: &TextSpan, ty: &Type) {
+        self.report_error(format!("Cannot access non-pointer type '{}'", ty), span.clone());
+    }
+
+    pub fn report_undeclared_struct(&mut self, span: &TextSpan) {
+        self.report_error(format!("Undeclared struct '{}'", span.literal), span.clone());
+    }
 }
 
 #[cfg(test)]

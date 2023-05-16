@@ -36,10 +36,9 @@ pub enum TokenKind {
     Extern,
     Func,
     Return,
-    Class,
-    Self_,
     As,
     Mut,
+    Struct,
     // Separators
     LeftParen,
     RightParen,
@@ -103,13 +102,12 @@ impl Display for TokenKind {
             TokenKind::Newline => write!(f, "Newline"),
             TokenKind::DoubleQuote => write!(f, "Quote"),
             TokenKind::Extern => write!(f, "Extern"),
-            TokenKind::Class => write!(f, "Class"),
-            TokenKind::Self_ => write!(f, "Self"),
             TokenKind::Dot => write!(f, "Dot"),
             TokenKind::SingleQuote => write!(f, "SingleQuote"),
             TokenKind::SemiColon => write!(f, "SemiColon"),
             TokenKind::As => write!(f, "As"),
             TokenKind::Mut => write!(f, "Mut"),
+            TokenKind::Struct => write!(f, "Struct"),
         }
     }
 }
@@ -170,10 +168,9 @@ impl<'a> Lexer<'a> {
                     "extern" => TokenKind::Extern,
                     "func" => TokenKind::Func,
                     "return" => TokenKind::Return,
-                    "class" => TokenKind::Class,
-                    "self" => TokenKind::Self_,
                     "as" => TokenKind::As,
                     "mut" => TokenKind::Mut,
+                    "struct" => TokenKind::Struct,
                     _ => TokenKind::Identifier,
                 }
             } else {

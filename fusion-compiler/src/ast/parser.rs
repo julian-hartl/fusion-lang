@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTFunctionReturnType, ASTStatement, ASTString, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, PtrSyntax, StaticTypeAnnotation, StringPart, TypeSyntax};
+use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTFunctionReturnType, ASTStatement, ASTString, ASTStructField, ASTStructInitField, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, PtrSyntax, StaticTypeAnnotation, StringPart, TypeSyntax};
 use crate::ast::lexer::{Lexer, Token, TokenKind};
 use crate::diagnostics::DiagnosticsBagCell;
 
@@ -31,6 +31,7 @@ pub struct Parser<'a> {
     current: Counter,
     diagnostics_bag: DiagnosticsBagCell,
     ast: &'a mut Ast,
+    is_parsing_condition: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -44,6 +45,7 @@ impl<'a> Parser<'a> {
             current: Counter::new(),
             diagnostics_bag,
             ast,
+            is_parsing_condition: false,
         }
     }
 
@@ -86,6 +88,9 @@ impl<'a> Parser<'a> {
             TokenKind::Return => {
                 self.parse_return_statement()
             }
+            TokenKind::Struct => {
+                self.parse_struct_declaration()
+            }
             _ => {
                 self.parse_expression_statement()
             }
@@ -95,6 +100,27 @@ impl<'a> Parser<'a> {
             self.consume();
         }
         stmt
+    }
+
+    fn parse_struct_declaration(&mut self) -> ASTStatement {
+        let struct_token = self.consume_and_check(TokenKind::Struct).clone();
+        let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+        self.ast.structs.push(identifier.clone());
+        let mut fields = Vec::new();
+        let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
+        while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
+            let field_identifier = self.consume_and_check(TokenKind::Identifier).clone();
+            let field_type = self.parse_type_annotation();
+            fields.push(ASTStructField {
+                ty: field_type,
+                identifier: field_identifier,
+            });
+            if self.current().kind == TokenKind::Comma {
+                self.consume();
+            }
+        }
+        let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
+        self.ast.struct_decl_statement(struct_token, identifier, fields, open_brace, close_brace)
     }
 
 
@@ -148,9 +174,6 @@ impl<'a> Parser<'a> {
             TokenKind::RightParen,
             |parser| {
                 match parser.current().kind {
-                    TokenKind::Self_ => {
-                        FuncDeclParameter::Self_(parser.consume_and_check(TokenKind::Self_).clone())
-                    }
                     _ => {
                         FuncDeclParameter::Normal(NormalFuncDeclParameter {
                             mut_token: parser.maybe_consume(TokenKind::Mut).cloned(),
@@ -187,7 +210,9 @@ impl<'a> Parser<'a> {
 
     fn parse_while_statement(&mut self) -> ASTStatement {
         let while_keyword = self.consume_and_check(TokenKind::While).clone();
+        self.is_parsing_condition = true;
         let condition_expr = self.parse_expression();
+        self.is_parsing_condition = false;
         let body = self.parse_statement();
         self.ast.while_statement(while_keyword, condition_expr, body)
     }
@@ -204,7 +229,9 @@ impl<'a> Parser<'a> {
 
     fn parse_if_statement(&mut self) -> ASTStatement {
         let if_keyword = self.consume_and_check(TokenKind::If).clone();
+        self.is_parsing_condition = true;
         let condition_expr = self.parse_expression();
+        self.is_parsing_condition = false;
         let then = self.parse_statement();
         let else_statement = self.parse_optional_else_statement();
         self.ast.if_statement(if_keyword, condition_expr, then, else_statement)
@@ -416,7 +443,12 @@ impl<'a> Parser<'a> {
                 self.ast.parenthesized_expression(left_paren, expr, right_paren)
             }
             TokenKind::Identifier => {
-                self.ast.identifier_expression(token)
+                self.consume_whitespace();
+                if self.current().kind == TokenKind::OpenBrace && !self.is_parsing_condition {
+                    self.parse_struct_init_expression(token)
+                } else {
+                    self.ast.identifier_expression(token)
+                }
             }
             TokenKind::True | TokenKind::False => {
                 let value = token.kind == TokenKind::True;
@@ -434,16 +466,45 @@ impl<'a> Parser<'a> {
             }
         };
         let mut expr = expr;
-        loop {
+        while self.current().kind != TokenKind::Newline || self.current().kind != TokenKind::SemiColon {
             match self.current().kind {
                 TokenKind::LeftParen => {
                     expr = self.parse_call_expression(expr);
+                }
+                TokenKind::Dot => {
+                    expr = self.parse_member_access_expression(expr);
+                }
+                TokenKind::Arrow => {
+                    expr = self.parse_member_access_expression(expr);
                 }
                 _ => {
                     return expr;
                 }
             }
         }
+        return expr;
+    }
+
+    fn parse_struct_init_expression(&mut self, identifier: Token) -> ASTExpression {
+        let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
+        let fields = self.parse_comma_separated_list(TokenKind::CloseBrace, |parser| {
+            let identifier = parser.consume_and_check(TokenKind::Identifier).clone();
+            let colon = parser.consume_and_check(TokenKind::Colon).clone();
+            let expr = parser.parse_expression();
+            ASTStructInitField {
+                identifier,
+                colon,
+                initializer: Box::new(expr),
+            }
+        });
+        let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
+        self.ast.struct_init_expression(identifier, open_brace, fields, close_brace)
+    }
+
+    fn parse_member_access_expression(&mut self, expr: ASTExpression) -> ASTExpression {
+        let dot = self.consume_and_check_multiple(&[TokenKind::Dot, TokenKind::Arrow]).clone();
+        let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+        self.ast.member_access_expression(expr, dot, identifier)
     }
 
     fn parse_char_expression(&mut self, token: Token) -> ASTExpression {
