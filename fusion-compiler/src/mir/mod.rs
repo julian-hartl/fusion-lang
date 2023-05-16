@@ -20,7 +20,7 @@ pub struct Body {
     label_gen: Rc<RefCell<LabelGenerator>>,
 }
 
-impl  Body  {
+impl Body {
     pub fn new(
         function: FunctionId,
         label_gen: Rc<RefCell<LabelGenerator>>,
@@ -77,11 +77,12 @@ impl BasicBlock {
 pub struct MIRScope {
     pub place_count: u32,
     mapped_variables: HashMap<VariableId, Place>,
-    locals:Vec<VariableId>,
-    scope:ScopeCell,
+    pub(crate) locals: Vec<VariableId>,
+    scope: ScopeCell,
+    pub locals_size: u32,
 }
 
-impl  MIRScope {
+impl MIRScope {
     pub fn new(
         scope: ScopeCell,
     ) -> Self {
@@ -90,12 +91,15 @@ impl  MIRScope {
             mapped_variables: HashMap::new(),
             locals: vec![],
             scope,
+            locals_size: 0,
         }
     }
 
     pub fn new_place(&mut self, layout: Layout) -> Place {
         let current_count = self.place_count;
         self.place_count += 1;
+        // todo: we should handle different scopes (lifetimes are different)
+        self.locals_size += layout.size;
         Place::no_offset(Var::new(current_count), layout)
     }
 
@@ -166,6 +170,9 @@ impl Instruction {
                 {
                     format!("{} = move {}", to, from)
                 }
+            InstructionKind::Deref { from, to } => {
+                format!("{} = deref {}", to, from)
+            }
         }
     }
 
@@ -234,7 +241,7 @@ impl Instruction {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq,Eq,Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Var {
     pub id: u32,
 }
@@ -295,7 +302,8 @@ pub enum Value {
     Bool(bool),
     Struct(Vec<Value>),
     Void,
-    Place(Place),
+    StoredAt(Place),
+    Ptr(Place),
 }
 
 impl Value {
@@ -305,7 +313,7 @@ impl Value {
 
     pub fn into_place(self) -> Place {
         match self {
-            Value::Place(place) => {
+            Value::StoredAt(place) => {
                 place
             }
             _ => {
@@ -359,7 +367,10 @@ impl Value {
                     alignment: 0,
                 }
             }
-            Value::Place(_) => {
+            Value::StoredAt(place) => {
+                place.layout
+            }
+            Value::Ptr(_) => {
                 Layout {
                     size: Layout::POINTER_SIZE,
                     alignment: Layout::POINTER_SIZE,
@@ -398,7 +409,10 @@ impl Display for Value {
             Value::Void => {
                 write!(f, "()")
             }
-            Value::Place(place) => {
+            Value::Ptr(place) => {
+                write!(f, "Ptr {}", place)
+            }
+            Value::StoredAt(place) => {
                 write!(f, "{}", place)
             }
         }?;
@@ -413,6 +427,7 @@ pub enum InstructionKind {
     BinaryOp { operator: HIRBinaryOperator, lhs: Value, rhs: Value, result_place: Place },
     UnaryOp { operator: HIRUnaryOperator, operand: Value, result_place: Place },
     Move { to: Place, from: Place },
+    Deref { to: Place, from: Place },
 }
 
 #[derive(Debug)]
@@ -429,15 +444,15 @@ impl Terminator {
         }
     }
 
-    pub fn return_(span: TextSpan, value: Value) -> Self {
-        Self::new(TerminatorKind::Return(value), Some(span))
+    pub fn return_(span: TextSpan, return_value_place: Place) -> Self {
+        Self::new(TerminatorKind::Return(return_value_place), Some(span))
     }
 
     pub fn goto(label: Label) -> Self {
         Self::new(TerminatorKind::Goto(label), None)
     }
 
-    pub fn if_(span: TextSpan, condition: Value, then_label: Label, else_label: Label) -> Self {
+    pub fn if_(span: TextSpan, condition: Place, then_label: Label, else_label: Label) -> Self {
         Self::new(TerminatorKind::If {
             condition,
             then: then_label,
@@ -449,12 +464,12 @@ impl Terminator {
 #[derive(Debug)]
 pub enum TerminatorKind {
     Goto(Label),
-    If { condition: Value, then: Label, else_: Label },
-    Return(Value),
+    If { condition: Place, then: Label, else_: Label },
+    Return(Place),
     Next,
 }
 
-pub struct MIR{
+pub struct MIR {
     pub bodies: Vec<Body>,
     pub globals: Vec<Global>,
 }
@@ -500,8 +515,8 @@ impl MIR {
                         s.push_str(&format!("    {} -> {};\n", bb.label, then_label));
                         s.push_str(&format!("    {} -> {};\n", bb.label, else_label));
                     }
-                    TerminatorKind::Return(value) => {
-                        instructions.push_str(format!("\\nreturn {}", value).as_str());
+                    TerminatorKind::Return(place) => {
+                        instructions.push_str(format!("\\nreturn {}", place).as_str());
                     }
                     TerminatorKind::Next => {
                         s.push_str(&format!("    {} -> {};\n", bb.label, body.basic_blocks[index + 1].label));
@@ -527,7 +542,7 @@ impl MIR {
             s.push_str(&format!("{}:\n", function.name));
             for id in body.scope.locals.iter() {
                 let local = scope.get_variable(id);
-                let place= body.scope.get_variable(id).unwrap();
+                let place = body.scope.get_variable(id).unwrap();
                 s.push_str(&format!("  {} = let {}: {}\n", place, local.name, local.ty));
             }
             for bb in &body.basic_blocks {
@@ -542,8 +557,8 @@ impl MIR {
                     TerminatorKind::If { condition: cond, then: then_label, else_: else_label } => {
                         s.push_str(&format!("    if {} then goto {} else goto {}\n", cond, then_label, else_label));
                     }
-                    TerminatorKind::Return(value) => {
-                        s.push_str(&format!("    return {}\n", value));
+                    TerminatorKind::Return(place) => {
+                        s.push_str(&format!("    return {}\n", place));
                     }
                     TerminatorKind::Next => {}
                 }
@@ -611,9 +626,10 @@ impl MIRGen {
         let bb = body.basic_blocks.last_mut();
         if let Some(bb) = bb {
             if let TerminatorKind::Next = bb.terminator.kind {
+                let place = body.scope.new_place(Value::Void.layout());
                 bb.terminator = Terminator {
                     span: None,
-                    kind: TerminatorKind::Return(Value::Void),
+                    kind: TerminatorKind::Return(place),
                 };
             }
         }
@@ -659,33 +675,23 @@ impl BodyGen {
     }
 
     fn gen_stmt(&mut self, stmt: &HIRStatement) {
-        let instruction_kind = match &stmt.kind {
+        match &stmt.kind {
             HIRStatementKind::VariableDeclaration(variable_declaration) => {
                 let expr = &variable_declaration.initializer;
-                let init = self.gen_expr(&expr);
-                match init {
-                    Value::Place(place) => {
-                        self.body.scope.move_variable(&variable_declaration.variable_id, place);
-                        return;
-                    }
-                    _ => {}
-                }
                 let var_place = self.body.scope.new_mapped_variable(&variable_declaration.variable_id);
-                InstructionKind::Store {
-                    place: var_place,
-                    value: init,
-                }
+                self.gen_expr(&expr, Some(&var_place));
             }
             HIRStatementKind::Expression(expr) => {
-                let value = self.gen_expr(&expr.expression);
-                let value_place = self.body.scope.new_place(value.layout());
-                InstructionKind::Store {
-                    place: value_place,
-                    value,
-                }
+                let value_place = self.body.scope.new_place(expr.expression.ty.layout(
+                    &self.scope.borrow(),
+                ));
+                self.gen_expr(&expr.expression, Some(&value_place));
             }
             HIRStatementKind::If(if_stmt) => {
-                let condition = self.gen_expr(&if_stmt.condition);
+                let condition = self.body.scope.new_place(Type::Bool.layout(
+                    &self.scope.borrow(),
+                ));
+                self.gen_expr(&if_stmt.condition, Some(&condition));
                 let current_block = self.current_block;
                 let then_block = self.push_basic_block();
                 let else_block = if_stmt.else_.as_ref().map(|_| self.push_basic_block());
@@ -700,48 +706,47 @@ impl BodyGen {
                     self.gen_stmts(&if_stmt.else_.as_ref().unwrap());
                 }
                 self.set_current_block_by_label(&end_block);
-                return;
             }
             HIRStatementKind::Block(stmt) => {
                 let current_block = self.current_block;
                 self.push_basic_block();
                 self.gen_stmts(&stmt.statements);
                 self.set_current_block(current_block);
-                return;
             }
             HIRStatementKind::While(while_stmt) => {
                 let condition_block = self.push_basic_block();
                 let body_block = self.push_basic_block();
                 let end_block = self.push_basic_block();
                 self.set_current_block_by_label(&condition_block);
-                let terminator = Terminator::if_(stmt.span.clone(), self.gen_expr(&while_stmt.condition), body_block, end_block);
+                let condition = self.body.scope.new_place(Type::Bool.layout(
+                    &self.scope.borrow(),
+                ));
+                self.gen_expr(&while_stmt.condition, Some(&condition));
+                let terminator = Terminator::if_(stmt.span.clone(), condition, body_block, end_block);
                 self.push_terminator(terminator);
                 self.set_current_block_by_label(&body_block);
                 self.gen_stmts(&while_stmt.body);
                 let terminator = Terminator::goto(condition_block);
                 self.push_terminator(terminator);
                 self.set_current_block_by_label(&end_block);
-                return;
             }
 
             HIRStatementKind::Return(return_stmt) => {
-                let primary = self.gen_expr(&return_stmt.expression);
-                let terminator = Terminator::return_(stmt.span.clone(), primary);
+                let place = self.body.scope.new_place(return_stmt.expression.ty.layout(
+                    &self.scope.borrow(),
+                ));
+                self.gen_expr(&return_stmt.expression, Some(&place));
+                // todo: develop a calling convention
+                let terminator = Terminator::return_(stmt.span.clone(), place);
                 self.push_terminator(terminator);
-                return;
             }
-        };
-        let instruction = Instruction {
-            kind: instruction_kind,
-            span: stmt.span.clone(),
-        };
-        self.push_instruction(instruction);
+        }
     }
 
-    fn gen_expr(&mut self, expr: &HIRExpression) -> Value {
+    fn gen_expr(&mut self, expr: &HIRExpression, store_at: Option<&Place>) -> Value {
         match &expr.kind {
-            HIRExpressionKind::Literal(expr) => {
-                match &expr.value {
+            HIRExpressionKind::Literal(literal_expr) => {
+                let value = match &literal_expr.value {
                     HIRLiteralValue::Integer(int) => {
                         Value::I64(*int)
                     }
@@ -754,14 +759,26 @@ impl BodyGen {
                     HIRLiteralValue::Char(char) => {
                         Value::Char(*char)
                     }
+                };
+                if let Some(place) = store_at {
+                    let instruction = Instruction {
+                        kind: InstructionKind::Store {
+                            value,
+                            place: *place,
+                        },
+                        span: expr.span.clone(),
+                    };
+                    self.push_instruction(instruction);
+                    return Value::StoredAt(*place);
                 }
+                value
             }
             HIRExpressionKind::Binary(bin_expr) => {
-                let left = self.gen_expr(&bin_expr.left);
-                let right = self.gen_expr(&bin_expr.right);
-                let result_place = self.body.scope.new_place(
+                let left = self.gen_expr(&bin_expr.left, None);
+                let right = self.gen_expr(&bin_expr.right, None);
+                let result_place = (store_at.copied()).unwrap_or(self.body.scope.new_place(
                     expr.ty.layout(self.scope.borrow().deref()),
-                );
+                ));
                 let bin_op = Instruction {
                     kind: InstructionKind::BinaryOp {
                         operator: bin_expr.op.clone(),
@@ -772,11 +789,13 @@ impl BodyGen {
                     span: expr.span.clone(),
                 };
                 self.push_instruction(bin_op);
-                Value::Place(result_place)
+                Value::StoredAt(result_place)
             }
             HIRExpressionKind::Unary(un_op) => {
-                let value = self.gen_expr(&un_op.operand);
-                let result_place = self.body.scope.new_place(value.layout());
+                let value = self.gen_expr(&un_op.operand, None);
+                let result_place = (store_at.copied()).unwrap_or(self.body.scope.new_place(
+                    expr.ty.layout(self.scope.borrow().deref()),
+                ));
                 let unary_op = Instruction {
                     kind: InstructionKind::UnaryOp {
                         operator: un_op.op.clone(),
@@ -786,10 +805,10 @@ impl BodyGen {
                     span: expr.span.clone(),
                 };
                 self.push_instruction(unary_op);
-                Value::Place(result_place)
+                Value::StoredAt(result_place)
             }
             HIRExpressionKind::Parenthesized(expr) => {
-                self.gen_expr(&expr.expression)
+                self.gen_expr(&expr.expression, store_at)
             }
             HIRExpressionKind::Assignment(a_expr) => {
                 let place = match &a_expr.target.kind {
@@ -797,29 +816,30 @@ impl BodyGen {
                         self.body.scope.get_variable(var_id).unwrap()
                     }
                     HIRAssignmentTargetKind::Deref(expr) => {
-                        let value = self.gen_expr(expr);
                         unimplemented!()
                     }
                     HIRAssignmentTargetKind::Error => {
                         unreachable!()
                     }
                     HIRAssignmentTargetKind::Field(id, target) => {
-                        let value = self.gen_expr(target).into_place();
+                        let value = self.gen_expr(target, None).into_place();
                         let offset = self.scope.borrow().get_field_offset(id);
                         let field_layout = self.scope.borrow().get_field(id).ty.layout(&self.scope.borrow());
                         Place::new(value.var, offset, field_layout)
                     }
                 };
-                let value = self.gen_expr(&a_expr.value);
-                let instruction = Instruction {
-                    kind: InstructionKind::Store {
-                        place,
-                        value,
-                    },
-                    span: expr.span.clone(),
-                };
-                self.push_instruction(instruction);
-                Value::Place(place)
+                self.gen_expr(&a_expr.value, Some(&place));
+                if let Some(store_at) = store_at {
+                    let instruction = Instruction {
+                        kind: InstructionKind::Move {
+                            from: place,
+                            to: store_at.clone(),
+                        },
+                        span: expr.span.clone(),
+                    };
+                    self.push_instruction(instruction);
+                }
+                Value::StoredAt(place)
             }
             HIRExpressionKind::Call(call_expr) => {
                 let function_id = match &call_expr.callee {
@@ -833,12 +853,12 @@ impl BodyGen {
                 };
                 let mut args = Vec::new();
                 for arg in &call_expr.arguments {
-                    args.push(self.gen_expr(arg));
+                    args.push(self.gen_expr(arg, None));
                 }
 
-                let return_value_place = self.body.scope.new_place(
-                    expr.ty.layout(self.scope.borrow().deref())
-                );
+                let return_value_place = (store_at.copied()).unwrap_or(self.body.scope.new_place(
+                    expr.ty.layout(self.scope.borrow().deref()),
+                ));
                 let call_instr = Instruction {
                     kind: InstructionKind::Call {
                         return_value_place,
@@ -849,78 +869,95 @@ impl BodyGen {
                 };
 
                 self.push_instruction(call_instr);
-                Value::Place(return_value_place)
+                Value::StoredAt(return_value_place)
             }
             HIRExpressionKind::FieldAccess(member_expr) => {
-                let primary = self.gen_expr(&member_expr.target);
+                let primary = self.gen_expr(&member_expr.target, None);
                 let object_place = primary.into_place();
                 let offset = self.scope.borrow().get_field_offset(&member_expr.field_id);
                 let field_layout = self.scope.borrow().get_field(&member_expr.field_id).ty.layout(&self.scope.borrow());
-                let place = Place::new(object_place.var, offset, field_layout);
-                Value::Place(place)
+                let field_place = Place::new(object_place.var, offset, field_layout);
+                if let Some(store_at) = store_at {
+                    let instruction = Instruction {
+                        kind: InstructionKind::Move {
+                            from: field_place,
+                            to: store_at.clone(),
+                        },
+                        span: expr.span.clone(),
+                    };
+                    self.push_instruction(instruction);
+                    return Value::StoredAt(store_at.clone());
+                }
+                Value::StoredAt(field_place)
             }
 
             HIRExpressionKind::Variable(var_expr) => {
                 let place = self.body.scope.get_variable(&var_expr.variable_id).unwrap();
-                Value::Place(place)
+                Value::StoredAt(place)
             }
             HIRExpressionKind::Void => {
                 Value::Void
             }
             HIRExpressionKind::Ref(ref_expr) => {
                 let place_of_value = self.gen_expr_as_place(&ref_expr.expression);
-                let place = self.body.scope.new_place(
-                    expr.ty.layout(self.scope.borrow().deref())
-                );
+                let place = (store_at.copied()).unwrap_or(self.body.scope.new_place(
+                    expr.ty.layout(self.scope.borrow().deref()),
+                ));
                 let instruction = Instruction {
                     kind: InstructionKind::Store {
                         place,
-                        value: Value::Place(place_of_value),
+                        value: Value::Ptr(place_of_value),
                     },
                     span: expr.span.clone(),
                 };
                 self.push_instruction(instruction);
-                Value::Place(place)
+                Value::StoredAt(place)
             }
             HIRExpressionKind::Deref(deref_expr) => {
-                let primary = self.gen_expr(&deref_expr.expression);
+                let primary = self.gen_expr(&deref_expr.expression, None);
+                // todo: we should ont move the place here but the value that is stored in the place
                 let from = primary.into_place();
-                let to = self.body.scope.new_place(
-                    expr.ty.layout(self.scope.borrow().deref())
-                );
+                let to = (store_at.copied()).unwrap_or(self.body.scope.new_place(
+                    expr.ty.layout(self.scope.borrow().deref()),
+                ));
                 let load = Instruction {
-                    kind: InstructionKind::Move { to, from },
+                    kind: InstructionKind::Deref { to, from },
                     span: expr.span.clone(),
                 };
                 self.push_instruction(load);
-                Value::Place(to)
+                Value::StoredAt(to)
             }
             HIRExpressionKind::Cast(cast_expr) => {
-                self.gen_expr(&cast_expr.expression).cast_to(&cast_expr.ty)
+                self.gen_expr(&cast_expr.expression, store_at).cast_to(&cast_expr.ty)
             }
             HIRExpressionKind::StructInit(struct_init_expr) => {
-                let struct_ptr = self.body.scope.new_place(
-                    expr.ty.layout(self.scope.borrow().deref())
+                let value = Value::Struct(
+                    struct_init_expr.fields.iter().map(|field| self.gen_expr(&field.value, None)).collect()
                 );
-                let values: Vec<Value> = struct_init_expr.fields.iter().map(|field| self.gen_expr(&field.value)).collect();
-                let instruction = Instruction {
-                    kind: InstructionKind::Store {
-                        place: struct_ptr,
-                        value: Value::Struct(values),
-                    },
-                    span: expr.span.clone(),
-                };
-                self.push_instruction(instruction);
-                Value::Place(struct_ptr)
+                match store_at {
+                    Some(store_at) => {
+                        let instruction = Instruction {
+                            kind: InstructionKind::Store {
+                                place: *store_at,
+                                value,
+                            },
+                            span: expr.span.clone(),
+                        };
+                        self.push_instruction(instruction);
+                        Value::StoredAt(*store_at)
+                    }
+                    None => {
+                        value
+                    }
+                }
             }
         }
     }
 
     pub fn gen_expr_as_place(&mut self, expr: &HIRExpression) -> Place {
-
-        let value = self.gen_expr(expr);
+        let value = self.gen_expr(expr, None);
         match value {
-            Value::Place(place) => place,
+            Value::StoredAt(place) => place,
             _ => {
                 let place = self.body.scope.new_place(
                     expr.ty.layout(self.scope.borrow().deref())
@@ -936,7 +973,6 @@ impl BodyGen {
                 place
             }
         }
-
     }
 
     pub fn push_basic_block(&mut self) -> Label {
