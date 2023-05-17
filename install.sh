@@ -2,5 +2,6 @@
 
 # Copy std folder to ~/.fusion/std
 
-cp -rT std ~/.fusion/std
+mkdir -p ~/.fusion/std
+cp -r std ~/.fusion/std
 
