@@ -150,7 +150,7 @@ cmake --build . --config Release --target check-all
 ### 6. Install LLVM and the sub-projects
 
    ```sh
-   sudo cmake --build . --config Release --target install
+   sudo cmake --build . --config Release --target install.sh
 ```
 
 ### 7. Set LLVM_SYS_150_PREFIX environment variable

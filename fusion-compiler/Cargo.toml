@@ -9,6 +9,7 @@ edition = "2021"
 termion = "2.0.1"
 lazy_static = "1.4.0"
 clap = {version = "4.2.7", features =  ["derive"]}
+dirs = "5.0.1"
 
 [dependencies.inkwell]
 version = "0.1.1"

@@ -48,10 +48,16 @@ impl Cli {
         Ok(())
     }
 
+    fn path_from_home_dir(path: &Path) -> PathBuf {
+        let mut home_dir = dirs::home_dir().unwrap();
+        home_dir.push(path);
+        home_dir
+    }
+
     fn gen_object(&self, build: &BuildCommand) -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary path for the output object file
         let output_file = Self::get_object_file(build);
-        let input_files = [Self::get_asm_file(build), PathBuf::from("std/linux/syscalls.s")];
+        let input_files = [Self::get_asm_file(build), Self::path_from_home_dir(Path::new(".fusion/std/linux/syscalls.s"))];
 
         // Execute the 'as' command to create the object file
         let output = std::process::Command::new("as")
