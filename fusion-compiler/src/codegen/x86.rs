@@ -289,7 +289,7 @@ impl<'a> X86Codegen<'a> {
             X86Operand::Register(X86Register::RSP),
             X86Operand::Immediate(X86Immediate::QWord(8)),
         ));
-        self.push_instruction(X86Instruction::Call("main".to_string()));
+        self.push_instruction(X86Instruction::Call("root__main".to_string()));
         self.push_instruction(X86Instruction::Mov(
             X86Operand::Register(X86Register::RDI),
             X86Operand::Register(X86Register::RAX),
