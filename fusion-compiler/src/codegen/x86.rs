@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::fmt::{Display, format};
 
-use crate::hir::{HIRBinaryOperator, Scope, ScopeCell};
-use crate::mir::{Instruction, InstructionKind, Label, MIR, Place, Value, Var};
+use crate::hir::{FunctionId, HIRBinaryOperator, Scope, ScopeCell};
+use crate::mir::{GlobalLabel, GlobalPlace, GlobalValue, Instruction, InstructionKind, Label, LocalPlace, MIR, Place, Value, Var};
 use crate::typings::Layout;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum X86Register {
     AL,
     AH,
@@ -56,6 +56,7 @@ impl Display for X86Register {
     }
 }
 
+#[derive(Debug, Clone)]
 enum X86Operand {
     Register(X86Register),
     Memory {
@@ -64,6 +65,9 @@ enum X86Operand {
         size: Option<X86Size>,
     },
     Immediate(X86Immediate),
+    Global {
+        label: GlobalLabel,
+    },
 }
 
 impl Display for X86Operand {
@@ -87,10 +91,14 @@ impl Display for X86Operand {
                 }
             }
             X86Operand::Immediate(imm) => write!(f, "{}", imm),
+            X86Operand::Global {
+                label
+            } => write!(f, "{}", label),
         }
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 enum X86Immediate {
     QWord(i64),
     DWord(i32),
@@ -144,6 +152,9 @@ enum X86Instruction {
     Lea(X86Operand, X86Operand),
     Cqo,
     Setl(X86Register),
+    Sete(X86Register),
+    Setne(X86Register),
+    Setle(X86Register),
     Movzx(X86Register, X86Register),
 }
 
@@ -173,11 +184,15 @@ impl Display for X86Instruction {
             X86Instruction::Lea(op1, op2) => write!(f, "lea {}, {}", op1, op2),
             X86Instruction::Cqo => write!(f, "cqo"),
             X86Instruction::Setl(reg) => write!(f, "setl {}", reg),
+            X86Instruction::Setne(reg) => write!(f, "setne {}", reg),
+            X86Instruction::Sete(reg) => write!(f, "sete {}", reg),
+            X86Instruction::Setle(reg) => write!(f, "setle {}", reg),
             X86Instruction::Movzx(reg1, reg2) => write!(f, "movzx {}, {}", reg1, reg2),
         }
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 enum X86Size {
     Byte,
     Word,
@@ -212,7 +227,7 @@ impl Display for X86Size {
 const INITIAL_BASE_POINTER_OFFSET: u32 = 8;
 
 pub struct X86Codegen<'a> {
-    var_addr: HashMap<Var, u32>,
+    var_addr: HashMap<Var, i32>,
     mir: &'a MIR,
     scope: ScopeCell,
     asm: String,
@@ -236,11 +251,26 @@ impl<'a> X86Codegen<'a> {
     pub fn gen(mut self) -> String {
         self.asm.push_str(".intel_syntax noprefix\n");
         self.asm.push_str(".global _start\n");
+        self.gen_globals();
+        self.asm.push_str(".text\n");
         self.gen_start();
         for body in self.mir.bodies.iter() {
             self.gen_body(body);
         }
         self.asm
+    }
+
+    pub fn gen_globals(&mut self) {
+        self.asm.push_str(".data\n");
+        for (label, value) in &self.mir.globals {
+            self.asm.push_str(&format!("{}:\n", label));
+            self.asm.push_str("    ");
+            match value {
+                GlobalValue::String(s) => {
+                    self.asm.push_str(&format!(".asciz \"{}\"\n", s));
+                }
+            }
+        }
     }
 
     pub fn gen_start(&mut self) {
@@ -276,6 +306,11 @@ impl<'a> X86Codegen<'a> {
         let function = scope.get_function(&body.function);
         self.asm.push_str(&format!("{}:\n", function.name));
         drop(scope);
+        let mut offset = -16;
+        for param in &body.parameters {
+            self.var_addr.insert(param.var, offset);
+            offset -= param.layout.size as i32;
+        }
         self.push_instruction(X86Instruction::Push(
             X86Operand::Register(X86Register::RBP),
         ));
@@ -321,7 +356,7 @@ impl<'a> X86Codegen<'a> {
             crate::mir::TerminatorKind::Return(storage) => {
                 // todo: fix this by properly handling void values
                 if storage.layout.size != 0 {
-                    let operand = self.gen_mem_op(storage);
+                    let operand = self.gen_local_mem_op(&storage);
                     // self.gen_value(value, storage);
                     self.push_instruction(X86Instruction::Mov(
                         X86Operand::Register(X86Register::RAX),
@@ -354,11 +389,30 @@ impl<'a> X86Codegen<'a> {
                 place,
                 value
             } => {
-                self.gen_mem_op(place);
+                self.gen_local_mem_op(place);
                 self.gen_value(value, place);
             }
-            InstructionKind::Call { .. } => {
-                unimplemented!()
+            InstructionKind::Call {
+                return_value_place,
+                args,
+                function_id
+            } => {
+                let arg_size = self.layout_function_call_args(args);
+                let scope = self.scope.borrow();
+                let function = scope.get_function(function_id);
+                let function_name = function.name.clone();
+                drop(scope);
+                self.push_instruction(X86Instruction::Call(function_name));
+                self.push_instruction(X86Instruction::Add(
+                    X86Operand::Register(X86Register::RSP),
+                    X86Operand::Immediate(X86Immediate::QWord(arg_size as i64)),
+                ));
+                // todo: for now we assume that each function returns its value in rax
+                let return_value_operand = self.gen_local_mem_op(return_value_place);
+                self.push_instruction(X86Instruction::Mov(
+                    return_value_operand,
+                    X86Operand::Register(X86Register::RAX),
+                ));
             }
             InstructionKind::BinaryOp {
                 operator,
@@ -366,14 +420,14 @@ impl<'a> X86Codegen<'a> {
                 lhs,
                 rhs
             } => {
-                self.gen_mem_op(result_place);
+                self.gen_local_mem_op(result_place);
                 self.gen_binary_op(operator, result_place, lhs, rhs);
             }
             InstructionKind::UnaryOp { .. } => {
                 unimplemented!()
             }
             InstructionKind::Deref { from, to } => {
-                self.gen_mem_op(to);
+                self.gen_local_mem_op(to);
                 self.deref_value(from, to);
             }
             InstructionKind::Move { from, to } => {
@@ -382,9 +436,9 @@ impl<'a> X86Codegen<'a> {
         }
     }
 
-    fn deref_value(&mut self, from: &Place, to: &Place) {
+    fn deref_value(&mut self, from: &Place, to: &LocalPlace) {
         let from_mem_op = self.gen_mem_op(&from);
-        let to_mem_op = self.gen_mem_op(&to);
+        let to_mem_op = self.gen_local_mem_op(&to);
         if to.layout.size <= Layout::POINTER_SIZE {
             self.push_instruction(X86Instruction::Mov(
                 X86Operand::Register(X86Register::RAX),
@@ -395,8 +449,8 @@ impl<'a> X86Codegen<'a> {
                 X86Operand::Memory {
                     base: X86Register::RAX,
                     offset: 0,
-                    size: None
-                }
+                    size: None,
+                },
             ));
             self.push_instruction(X86Instruction::Mov(
                 to_mem_op,
@@ -419,9 +473,9 @@ impl<'a> X86Codegen<'a> {
         }
     }
 
-    fn copy_value(&mut self, from: &Place, to: &Place) {
+    fn copy_value(&mut self, from: &Place, to: &LocalPlace) {
         let from_mem_op = self.gen_mem_op(&from);
-        let to_mem_op = self.gen_mem_op(&to);
+        let to_mem_op = self.gen_local_mem_op(&to);
         if to.layout.size <= Layout::POINTER_SIZE {
             self.push_instruction(X86Instruction::Mov(
                 X86Operand::Register(X86Register::RAX),
@@ -448,10 +502,10 @@ impl<'a> X86Codegen<'a> {
         }
     }
 
-    fn gen_value(&mut self, value: &Value, store_at: &Place) {
+    fn gen_value(&mut self, value: &Value, store_at: &LocalPlace) {
         match value {
             Value::I64(value) => {
-                let store_at_mem_op = self.gen_mem_op(store_at);
+                let store_at_mem_op = self.gen_local_mem_op(store_at);
                 self.push_instruction(X86Instruction::Mov(
                     store_at_mem_op,
                     X86Operand::Immediate(
@@ -460,7 +514,7 @@ impl<'a> X86Codegen<'a> {
                 ));
             }
             Value::Char(value) => {
-                let store_at_mem_op = self.gen_mem_op(store_at);
+                let store_at_mem_op = self.gen_local_mem_op(store_at);
                 self.push_instruction(X86Instruction::Mov(
                     store_at_mem_op,
                     X86Operand::Immediate(
@@ -468,11 +522,8 @@ impl<'a> X86Codegen<'a> {
                     ),
                 ));
             }
-            Value::String(_) => {
-                unimplemented!()
-            }
             Value::Bool(value) => {
-                let store_at_mem_op = self.gen_mem_op(store_at);
+                let store_at_mem_op = self.gen_local_mem_op(store_at);
                 self.push_instruction(X86Instruction::Mov(
                     store_at_mem_op,
                     X86Operand::Immediate(
@@ -483,7 +534,7 @@ impl<'a> X86Codegen<'a> {
             Value::Struct(values) => {
                 let mut offset = 0;
                 for value in values.iter() {
-                    let store_at = Place::new(store_at.var, offset, value.layout());
+                    let store_at = LocalPlace::new(store_at.var, offset, value.layout());
                     self.gen_value(value, &store_at);
                     offset += value.layout().size;
                 }
@@ -495,7 +546,7 @@ impl<'a> X86Codegen<'a> {
                     X86Operand::Register(X86Register::RAX),
                     operand,
                 ));
-                let store_at_mem_op = self.gen_mem_op(store_at);
+                let store_at_mem_op = self.gen_local_mem_op(store_at);
                 self.push_instruction(X86Instruction::Mov(
                     store_at_mem_op,
                     X86Operand::Register(X86Register::RAX),
@@ -507,7 +558,31 @@ impl<'a> X86Codegen<'a> {
         }
     }
 
+    fn layout_function_call_args(&mut self, args: &Vec<LocalPlace>) -> u32 {
+        let mut arg_size = 0;
+        // This will layout the arguments in reversed order on the stack
+        for arg in args.iter().rev() {
+            let op = self.gen_local_mem_op(arg);
+            self.push_instruction(X86Instruction::Push(op));
+            arg_size += arg.layout.size;
+        }
+        arg_size
+    }
+
     fn gen_mem_op(&mut self, place: &Place) -> X86Operand {
+        match place {
+            Place::Local(place) => self.gen_local_mem_op(place),
+            Place::Global(place) => self.gen_global_mem_op(place),
+        }
+    }
+
+    fn gen_global_mem_op(&mut self, place: &GlobalPlace) -> X86Operand {
+        X86Operand::Global {
+            label: place.label.clone(),
+        }
+    }
+
+    fn gen_local_mem_op(&mut self, place: &LocalPlace) -> X86Operand {
         if !self.var_addr.contains_key(&place.var) {
             let size = place.layout.size;
             // self.push_instruction(X86Instruction::Sub(
@@ -515,9 +590,9 @@ impl<'a> X86Codegen<'a> {
             //     X86Operand::Immediate(X86Immediate::QWord(size as i64)),
             // ));
             self.base_pointer_offset += size;
-            self.var_addr.insert(place.var, self.base_pointer_offset);
+            self.var_addr.insert(place.var, self.base_pointer_offset as i32);
         }
-        let offset = self.get_place_offset(place) + place.offset;
+        let offset = self.get_place_offset(place) + place.offset as i32;
         X86Operand::Memory {
             base: X86Register::RBP,
             offset: -(offset as i32),
@@ -525,7 +600,7 @@ impl<'a> X86Codegen<'a> {
         }
     }
 
-    fn get_place_offset(&mut self, place: &Place) -> u32 {
+    fn get_place_offset(&mut self, place: &LocalPlace) -> i32 {
         let var = &place.var;
         self.var_addr[var]
     }
@@ -535,85 +610,105 @@ impl<'a> X86Codegen<'a> {
         self.asm.push_str(format!("{}", instruction).as_str());
         self.asm.push_str("\n");
     }
-    fn gen_binary_op(&mut self, op: &HIRBinaryOperator, store_at: &Place, lhs: &Value, rhs: &Value) {
+    fn gen_binary_op(&mut self, op: &HIRBinaryOperator, store_at: &LocalPlace, lhs: &Value, rhs: &Value) {
         let lhs_op = self.gen_value_op(lhs);
         let rhs_op = self.gen_value_op(rhs);
-        let store_at_op = self.gen_mem_op(store_at);
+        let store_at_op = self.gen_local_mem_op(store_at);
         match op {
-            HIRBinaryOperator::Add => {
-                self.push_instruction(X86Instruction::Mov(
-                    X86Operand::Register(X86Register::RAX),
-                    lhs_op,
-                ));
-                self.push_instruction(X86Instruction::Add(
-                    X86Operand::Register(X86Register::RAX),
-                    rhs_op,
-                ));
-                self.push_instruction(X86Instruction::Mov(
-                    store_at_op,
-                    X86Operand::Register(X86Register::RAX),
-                ));
+            HIRBinaryOperator::Add
+            | HIRBinaryOperator::Subtract
+            | HIRBinaryOperator::Multiply
+            | HIRBinaryOperator::Divide
+            => {
+                self.gen_arithmetic_op(op, lhs_op, rhs_op, store_at_op);
             }
-            HIRBinaryOperator::Subtract => {
-                self.push_instruction(X86Instruction::Mov(
-                    X86Operand::Register(X86Register::RAX),
-                    lhs_op,
-                ));
-                self.push_instruction(X86Instruction::Sub(
-                    X86Operand::Register(X86Register::RAX),
-                    rhs_op,
-                ));
-                self.push_instruction(X86Instruction::Mov(
-                    store_at_op,
-                    X86Operand::Register(X86Register::RAX),
-                ));
+            HIRBinaryOperator::Equals
+            | HIRBinaryOperator::NotEquals
+            | HIRBinaryOperator::LessThan
+            | HIRBinaryOperator::LessThanOrEqual
+            | HIRBinaryOperator::GreaterThan
+            | HIRBinaryOperator::GreaterThanOrEqual
+            => {
+                self.gen_comp_op(op, store_at, lhs, rhs);
             }
-            HIRBinaryOperator::Multiply => {
-                self.push_instruction(X86Instruction::Mov(
-                    X86Operand::Register(X86Register::RAX),
-                    lhs_op,
-                ));
-                self.push_instruction(X86Instruction::Mul(
-                    rhs_op,
-                ));
-                self.push_instruction(X86Instruction::Mov(
-                    store_at_op,
-                    X86Operand::Register(X86Register::RAX),
-                ));
-            }
-            HIRBinaryOperator::Divide => {
-                self.push_instruction(X86Instruction::Mov(
-                    X86Operand::Register(X86Register::RAX),
-                    lhs_op,
-                ));
-                self.push_instruction(X86Instruction::Cqo);
-                self.push_instruction(X86Instruction::Div(
-                    rhs_op,
-                ));
-                self.push_instruction(X86Instruction::Mov(
-                    store_at_op,
-                    X86Operand::Register(X86Register::RAX),
-                ));
-            }
-            HIRBinaryOperator::LessThan => {
-                self.push_instruction(X86Instruction::Mov(
-                    X86Operand::Register(X86Register::RAX),
-                    lhs_op,
-                ));
-                self.push_instruction(X86Instruction::Cmp(
-                    X86Operand::Register(X86Register::RAX),
-                    rhs_op,
-                ));
-                self.push_instruction(X86Instruction::Setl(
-                    X86Register::AL,
-                ));
-                self.push_instruction(X86Instruction::Mov(
-                    store_at_op,
-                    X86Operand::Register(X86Register::AL),
-                ));
-            }
-            _ => unimplemented!(),
+            _ => unimplemented!("Binary operator {:?} not implemented", op),
         }
+    }
+
+    fn gen_comp_op(&mut self, op: &HIRBinaryOperator, store_at: &LocalPlace, lhs: &Value, rhs: &Value) {
+        let lhs_op = self.gen_value_op(lhs);
+        let rhs_op = self.gen_value_op(rhs);
+        let store_at_op = self.gen_local_mem_op(store_at);
+        self.push_instruction(X86Instruction::Mov(
+            X86Operand::Register(X86Register::RAX),
+            lhs_op,
+        ));
+        self.push_instruction(X86Instruction::Cmp(
+            X86Operand::Register(X86Register::RAX),
+            rhs_op,
+        ));
+        let comp_instruction =
+            match op {
+                HIRBinaryOperator::Equals => {
+                    X86Instruction::Sete(
+                        X86Register::AL,
+                    )
+                }
+                HIRBinaryOperator::NotEquals => {
+                    X86Instruction::Setne(
+                        X86Register::AL,
+                    )
+                }
+                HIRBinaryOperator::LessThan => {
+                    X86Instruction::Setl(
+                        X86Register::AL,
+                    )
+                }
+                HIRBinaryOperator::LessThanOrEqual => {
+                    X86Instruction::Setle(
+                        X86Register::AL,
+                    )
+                }
+                _ => unimplemented!("Comp operator {:?} not implemented", op),
+            };
+        self.push_instruction(comp_instruction);
+        self.push_instruction(X86Instruction::Mov(
+            store_at_op,
+            X86Operand::Register(X86Register::AL),
+        ));
+    }
+
+    fn gen_arithmetic_op(&mut self, op: &HIRBinaryOperator, lhs_op: X86Operand, rhs_op: X86Operand, store_at_op: X86Operand) {
+        let dest = X86Operand::Register(X86Register::RAX);
+        self.push_instruction(X86Instruction::Mov(
+            dest.clone(),
+            lhs_op,
+        ));
+        let arithmetic_instruction = match op {
+            HIRBinaryOperator::Add => X86Instruction::Add(
+                dest.clone(),
+                rhs_op,
+            ),
+            HIRBinaryOperator::Subtract => X86Instruction::Sub(
+                dest.clone(),
+                rhs_op,
+            ),
+            HIRBinaryOperator::Multiply => X86Instruction::Mul(
+                rhs_op,
+            ),
+            HIRBinaryOperator::Divide => {
+                self.push_instruction(X86Instruction::Cqo);
+                X86Instruction::Div(
+                    rhs_op,
+                )
+            }
+            _ => unimplemented!("Binary operator {:?} not implemented", op),
+        };
+        self.push_instruction(arithmetic_instruction);
+        self.push_instruction(X86Instruction::Mov(
+            store_at_op,
+            dest,
+        ));
     }
 
     fn gen_value_op(&mut self, value: &Value) -> X86Operand {
@@ -623,9 +718,6 @@ impl<'a> X86Codegen<'a> {
             }
             Value::Char(value) => {
                 X86Operand::Immediate(X86Immediate::Byte(*value as u8 as i8))
-            }
-            Value::String(_) => {
-                unimplemented!()
             }
             Value::Bool(value) => {
                 X86Operand::Immediate(X86Immediate::Byte(if *value { 1 } else { 0 }))

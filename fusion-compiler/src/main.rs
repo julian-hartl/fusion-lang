@@ -1,6 +1,9 @@
-use inkwell::targets::{InitializationConfig, Target};
+#[macro_use]
+extern crate clap;
 
-use compilation::CompilationUnit;
+use clap::Parser;
+
+use crate::cli::Command;
 
 mod ast;
 mod diagnostics;
@@ -12,15 +15,17 @@ mod formatting;
 mod mir;
 mod hir;
 mod interpreter;
+mod cli;
 
-fn main() -> Result<(), ()> {
-    let input = std::env::args().nth(1).expect("No input file");
-    let path = std::path::Path::new(&input);
-    let source_text = text::io::read_source_text(&path).map_err(|_| ())?;
-    let mut compilation_unit = CompilationUnit::compile(&source_text).map_err(|_| ())?;
-    // let jit = &compilation_unit.jit;
-    // let exit_code = unsafe { jit.call() };
-    // println!("Exit code: {}", exit_code);
-    // compilation_unit.run();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = cli::Cli::parse();
+    match &cli.command {
+        Command::Build(cmd) => {
+            cli.build(cmd)?;
+        }
+        Command::Run(cmd) => {
+            cli.run(cmd)?;
+        }
+    }
     Ok(())
 }

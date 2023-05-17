@@ -1110,7 +1110,7 @@ impl HIRGen {
             ASTExpressionKind::String(expr) => {
                 let ty = Type::StringSlice(false);
                 let expr = HIRExpressionKind::Literal(HIRLiteralExpression {
-                    value: HIRLiteralValue::String(expr.string.to_string()),
+                    value: HIRLiteralValue::String(expr.string.to_raw_string()),
                 });
                 (expr, ty)
             }

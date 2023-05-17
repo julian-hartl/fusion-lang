@@ -14,7 +14,7 @@ use crate::ast::parser::Parser;
 use crate::diagnostics::{DiagnosticsBag, DiagnosticsBagCell};
 use crate::diagnostics::printer::DiagnosticsPrinter;
 use crate::formatting::Formatter;
-use crate::hir::{HIR, HIRGen, Scope};
+use crate::hir::{HIR, HIRGen, Scope, ScopeCell};
 use crate::mir::{MIR, MIRGen};
 use crate::text;
 use crate::text::SourceText;
@@ -24,6 +24,7 @@ pub struct CompilationUnit {
     pub diagnostics_bag: DiagnosticsBagCell,
     pub hir: HIR,
     pub mir: MIR,
+    pub scope: ScopeCell,
 }
 
 impl CompilationUnit {
@@ -66,33 +67,12 @@ impl CompilationUnit {
             "mir.txt",
         );
         Self::check_diagnostics(&source_text, &diagnostics_bag)?;
-        let x86_gen = crate::codegen::x86::X86Codegen::new(
-            &mir,
-            scope.clone()
-        );
-        let asm = x86_gen.gen();
-        let mut file = File::create("out.s").expect("Failed to create file");
-        file.write_all(asm.as_bytes()).expect("Failed to write to file");
-        // Target::initialize_aarch64(&InitializationConfig::default());
-        //
-        // let context = inkwell::context::Context::create();
-        // let type_builder = LLVMTypeBuilder::new(&context);
-        // let mut llvm_gen = LLVMCodegen::new(
-        //     &context,
-        //     type_builder,
-        // );
-        //
-        // llvm_gen.gen(
-        //     &mir
-        // ).expect("Failed to generate code");
-        // llvm_gen.save_ir().expect("Failed to output IR");
-        // llvm_gen.save_asm().expect("Failed to output x86");
-        // llvm_gen.save_executable().expect("Failed to output executable");
         Ok(CompilationUnit {
             ast,
             diagnostics_bag,
             hir,
             mir,
+            scope,
         })
     }
 
