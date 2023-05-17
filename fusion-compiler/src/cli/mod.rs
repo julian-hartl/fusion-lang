@@ -105,7 +105,9 @@ impl Cli {
 
     fn execute(&self, build: &BuildCommand) -> Result<(), Box<dyn std::error::Error>> {
         let output_file = &build.output;
-        let output = std::process::Command::new(output_file)
+        let output = std::process::Command::new(
+            format!("./{}", output_file.to_str().unwrap())
+        )
             .output()
             .map_err(|e| format!("Failed to execute output file: {}", e))?;
 
