@@ -1,20 +1,21 @@
 use std::fmt::format;
 use std::ops::Not;
 
-use crate::hir::{HIR, HIRAssignmentExpression, HIRAssignmentTargetKind, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStructInitExpression, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement, Scope, ScopeCell};
+use crate::hir::{HIR, HIRAssignmentExpression, HIRAssignmentTargetKind, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStructInitExpression, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
 use crate::hir::visitor::HIRVisitor;
+use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
 
 pub struct HIRVisualizer<'a> {
     output: String,
     indent: usize,
     hir: &'a HIR,
-    scope: ScopeCell
+    scope: GlobalScopeCell,
 }
 
 impl<'a> HIRVisualizer<'a> {
     pub fn new(
         hir: &'a HIR,
-        scope: ScopeCell,
+        scope: GlobalScopeCell,
     ) -> Self {
         HIRVisualizer {
             output: String::new(),
@@ -56,7 +57,7 @@ impl<'a> HIRVisualizer<'a> {
         for (function, body) in self.hir.functions(&scope_ref) {
             self.write("func");
             self.write_whitespace();
-            self.write(&function.name);
+            self.write(&function.name.name);
             if !function.parameters.is_empty() {
                 self.write("(");
                 for (i, parameter_id) in function.parameters.iter().enumerate() {
@@ -259,7 +260,7 @@ impl HIRVisitor for HIRVisualizer<'_> {
                 let scope = self.scope.clone();
                 let scope_ref = scope.borrow();
                 let function = scope_ref.get_function(id);
-                self.write(&function.name);
+                self.write(&function.name.name);
             }
             HIRCallee::Undeclared(name) => {
                 self.write(name);
@@ -314,8 +315,8 @@ impl HIRVisitor for HIRVisualizer<'_> {
     fn visit_struct_init_expr(&mut self, expr: &HIRStructInitExpression) {
         let scope = self.scope.clone();
         let scope_ref = scope.borrow();
-        let struct_ =scope_ref.get_struct(&expr.struct_id);
-        self.write(&struct_.name);
+        let struct_ = scope_ref.get_struct(&expr.struct_id);
+        self.write(&struct_.name.name);
         self.write("{");
         for (i, field) in expr.fields.iter().enumerate() {
             let field_name = &scope_ref.get_field(&field.field_id).name;

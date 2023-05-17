@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use clap::Parser;
 use std::fs::File;
 use std::io::{Error, ErrorKind, Write};
@@ -133,8 +132,7 @@ impl Cli {
     }
 
     fn gen_asm(&self, build: &BuildCommand) -> Result<(), Box<dyn std::error::Error>> {
-        let source_text = text::io::read_source_text(&build.input)?;
-        let compilation_unit = CompilationUnit::compile(&source_text).map_err(|_| Box::new(Error::new(ErrorKind::Other, "Compilation failed")))?;
+        let compilation_unit = CompilationUnit::compile(&build.input).map_err(|_| Box::new(Error::new(ErrorKind::Other, "Compilation failed")))?;
 
         let x86_gen = crate::codegen::x86::X86Codegen::new(
             &compilation_unit.mir,

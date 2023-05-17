@@ -10,5 +10,5 @@ pub fn read_source_text(
     let mut file = File::open(path)?;
     let mut text = String::new();
     file.read_to_string(&mut text)?;
-    Ok(SourceText::new(&text, Some(path.to_str().expect("Failed to convert path to string"))))
+    Ok(SourceText::new(text))
 }

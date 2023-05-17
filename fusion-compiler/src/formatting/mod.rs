@@ -1,4 +1,4 @@
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTMemberAccessExpression, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTWhileStatement, FuncDeclParameter};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTWhileStatement, FuncDeclParameter};
 use crate::ast::visitor::ASTVisitor;
 use crate::text::span::TextSpan;
 
@@ -55,6 +55,12 @@ impl<'a> Formatter<'a> {
 impl ASTVisitor for Formatter<'_> {
     fn get_ast(&self) -> &Ast {
         self.ast
+    }
+
+    fn visit_mod_decl_statement(&mut self, mod_decl_stmt: &ASTModDeclStatement) {
+        self.write("mod");
+        self.whitespace();
+        self.write(&mod_decl_stmt.identifier.span.literal);
     }
 
     fn visit_struct_decl_statement(&mut self, struct_decl_stmt: &ASTStructDeclStatement) {
@@ -191,7 +197,7 @@ impl ASTVisitor for Formatter<'_> {
     }
 
     fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression) {
-        self.write(&struct_init_expression.identifier.span.literal);
+        self.write(&struct_init_expression.identifier.to_string());
         self.write("{");
         for (i, field_init) in struct_init_expression.fields.iter().enumerate() {
             self.write(&field_init.identifier.span.literal);
@@ -262,7 +268,7 @@ impl ASTVisitor for Formatter<'_> {
     }
 
     fn visit_identifier_expression(&mut self, variable_expression: &ASTIdentifierExpression, expr: &ASTExpression) {
-        self.write(&variable_expression.identifier.span.literal);
+        self.write(&variable_expression.identifier.to_string());
     }
 
     fn visit_number_expression(&mut self, number: &ASTNumberExpression, expr: &ASTExpression) {

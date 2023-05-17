@@ -1,5 +1,5 @@
 use termion::color::{Fg, Reset};
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement, ASTDerefExpression, ASTRefExpression, ASTCharExpression, ASTCastExpression, ASTStructDeclStatement, ASTMemberAccessExpression, ASTStructInitExpression};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement, ASTDerefExpression, ASTRefExpression, ASTCharExpression, ASTCastExpression, ASTStructDeclStatement, ASTMemberAccessExpression, ASTStructInitExpression, ASTModDeclStatement};
 use crate::text::span::TextSpan;
 use crate::ast::printer::ASTPrinter;
 
@@ -33,8 +33,14 @@ pub trait ASTVisitor {
             ASTStatementKind::StructDecl(struct_decl_stmt) => {
                 self.visit_struct_decl_statement(struct_decl_stmt);
             }
+            ASTStatementKind::ModDecl(mod_decl_stmt) => {
+                self.visit_mod_decl_statement(mod_decl_stmt);
+            }
         }
     }
+
+
+    fn visit_mod_decl_statement(&mut self, mod_decl_stmt: &ASTModDeclStatement);
 
     fn visit_struct_decl_statement(&mut self, struct_decl_stmt: &ASTStructDeclStatement);
 

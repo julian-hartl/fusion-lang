@@ -1,4 +1,4 @@
-use crate::hir::Scope;
+use crate::modules::scopes::GlobalScope;
 use crate::mir::MIR;
 
 pub mod llvm;
@@ -9,6 +9,6 @@ pub trait Codegen {
     fn gen(
         &mut self,
         mir: &MIR,
-        scope: &Scope,
+        scope: &GlobalScope,
     ) -> Result<String, std::fmt::Error>;
 }

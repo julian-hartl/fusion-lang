@@ -2,7 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::ops::DerefMut;
 
 use crate::ast::lexer::TokenKind;
-use crate::hir::{Scope, StructId};
+use crate::hir::StructId;
+use crate::modules::scopes::GlobalScope;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionType {
@@ -118,7 +119,7 @@ impl Type {
         }
     }
 
-    pub fn layout(&self, scope: &Scope) -> Layout {
+    pub fn layout(&self, scope: &GlobalScope) -> Layout {
         match self {
             Type::I64 => Layout {
                 size: 8,

@@ -1,9 +1,8 @@
 use std::cell::Cell;
 
-use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTFunctionReturnType, ASTStatement, ASTString, ASTStructField, ASTStructInitField, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, PtrSyntax, StaticTypeAnnotation, StringPart, TypeSyntax};
+use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTFunctionReturnType, ASTStatement, ASTString, ASTStructField, ASTStructInitField, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, PtrSyntax, QualifiedIdentifier, StaticTypeAnnotation, StringPart, TypeSyntax};
 use crate::ast::lexer::{Lexer, Token, TokenKind};
 use crate::diagnostics::DiagnosticsBagCell;
-
 #[derive(Debug, Clone)]
 pub struct Counter {
     value: Cell<usize>,
@@ -32,6 +31,7 @@ pub struct Parser<'a> {
     diagnostics_bag: DiagnosticsBagCell,
     ast: &'a mut Ast,
     is_parsing_condition: bool,
+    encountered_module_declarations: Vec<Token>
 }
 
 impl<'a> Parser<'a> {
@@ -46,7 +46,12 @@ impl<'a> Parser<'a> {
             diagnostics_bag,
             ast,
             is_parsing_condition: false,
+            encountered_module_declarations: Vec::new(),
         }
+    }
+
+    pub fn get_encountered_module_declarations(&self) -> &Vec<Token> {
+        &self.encountered_module_declarations
     }
 
     pub fn parse(&mut self) {
@@ -70,6 +75,9 @@ impl<'a> Parser<'a> {
         self.consume_whitespace();
         let kind = &self.current().kind;
         let stmt = match kind {
+            TokenKind::Mod => {
+                self.parse_module_declaration()
+            }
             TokenKind::Let => {
                 self.parse_let_statement()
             }
@@ -100,6 +108,14 @@ impl<'a> Parser<'a> {
             self.consume();
         }
         stmt
+    }
+
+    fn parse_module_declaration(&mut self) -> ASTStatement {
+        let mod_token = self.consume_and_check(TokenKind::Mod).clone();
+        let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+        self.encountered_module_declarations.push(identifier.clone());
+
+        self.ast.module_decl_statement(mod_token, identifier)
     }
 
     fn parse_struct_declaration(&mut self) -> ASTStatement {
@@ -443,11 +459,13 @@ impl<'a> Parser<'a> {
                 self.ast.parenthesized_expression(left_paren, expr, right_paren)
             }
             TokenKind::Identifier => {
+                let identifiers = self.parse_identifier_chain(token);
+                let qualified = QualifiedIdentifier::new(identifiers);
                 self.consume_whitespace();
                 if self.current().kind == TokenKind::OpenBrace && !self.is_parsing_condition {
-                    self.parse_struct_init_expression(token)
+                    self.parse_struct_init_expression(qualified)
                 } else {
-                    self.ast.identifier_expression(token)
+                    self.ast.identifier_expression(qualified)
                 }
             }
             TokenKind::True | TokenKind::False => {
@@ -485,7 +503,17 @@ impl<'a> Parser<'a> {
         return expr;
     }
 
-    fn parse_struct_init_expression(&mut self, identifier: Token) -> ASTExpression {
+    fn parse_identifier_chain(&mut self, identifier: Token) -> Vec<Token> {
+        let mut identifiers = vec![identifier];
+        while self.current().kind == TokenKind::ColonColon {
+            self.consume();
+            let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+            identifiers.push(identifier);
+        }
+        return identifiers;
+    }
+
+    fn parse_struct_init_expression(&mut self, identifier: QualifiedIdentifier) -> ASTExpression {
         let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
         let fields = self.parse_comma_separated_list(TokenKind::CloseBrace, |parser| {
             let identifier = parser.consume_and_check(TokenKind::Identifier).clone();

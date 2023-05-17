@@ -39,6 +39,7 @@ pub enum TokenKind {
     As,
     Mut,
     Struct,
+    Mod,
     // Separators
     LeftParen,
     RightParen,
@@ -51,6 +52,7 @@ pub enum TokenKind {
     SingleQuote,
     Dot,
     SemiColon,
+    ColonColon,
     // Other
     Bad,
     Whitespace,
@@ -108,6 +110,8 @@ impl Display for TokenKind {
             TokenKind::As => write!(f, "As"),
             TokenKind::Mut => write!(f, "Mut"),
             TokenKind::Struct => write!(f, "Struct"),
+            TokenKind::ColonColon => write!(f, "ColonColon"),
+            TokenKind::Mod => write!(f, "Mod"),
         }
     }
 }
@@ -171,6 +175,7 @@ impl<'a> Lexer<'a> {
                     "as" => TokenKind::As,
                     "mut" => TokenKind::Mut,
                     "struct" => TokenKind::Struct,
+                    "mod" => TokenKind::Mod,
                     _ => TokenKind::Identifier,
                 }
             } else {
@@ -226,7 +231,7 @@ impl<'a> Lexer<'a> {
                 TokenKind::Comma
             }
             ':' => {
-                TokenKind::Colon
+                self.lex_potential_double_char_operator(':', TokenKind::Colon, TokenKind::ColonColon)
             }
             '"' => {
                 TokenKind::DoubleQuote

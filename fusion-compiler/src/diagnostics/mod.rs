@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::ast::lexer::{Token, TokenKind};
+use crate::ast::QualifiedIdentifier;
 use crate::text::span::TextSpan;
 use crate::typings::Type;
 
@@ -188,7 +189,7 @@ impl DiagnosticsBag {
         self.report_error(format!("Struct '{}' already declared", token.span.literal), token.span.clone());
     }
 
-    pub fn report_struct_has_no_member(&mut self, span: &TextSpan, struct_name: &String) {
+    pub fn report_struct_has_no_member(&mut self, span: &TextSpan, struct_name: &str) {
         self.report_error(format!("Struct '{}' has no member '{}'", struct_name, span.literal), span.clone());
     }
 
@@ -204,8 +205,20 @@ impl DiagnosticsBag {
         self.report_error(format!("Cannot access non-pointer type '{}'", ty), span.clone());
     }
 
-    pub fn report_undeclared_struct(&mut self, span: &TextSpan) {
-        self.report_error(format!("Undeclared struct '{}'", span.literal), span.clone());
+    pub fn report_undeclared_struct(&mut self, span: &TextSpan, name: &str) {
+        self.report_error(format!("Undeclared struct '{}'", name), span.clone());
+    }
+
+    pub fn report_unexpected_qualified_identifier(&mut self, id: &QualifiedIdentifier) {
+        self.report_error(format!("Unexpected qualified identifier '{}'", id), id.span());
+    }
+
+    pub fn report_could_not_open_module(&mut self, span: &TextSpan) {
+        self.report_error(format!("Could not open module '{}'", span.literal), span.clone());
+    }
+
+    pub fn report_module_already_declared(&mut self, span: &TextSpan) {
+        self.report_error(format!("Module '{}' already declared", span.literal), span.clone());
     }
 }
 

@@ -94,6 +94,12 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.ast
     }
 
+    fn visit_mod_decl_statement(&mut self, mod_decl_stmt: &ASTModDeclStatement) {
+        self.add_keyword("mod");
+        self.add_whitespace();
+        self.add_text(&mod_decl_stmt.identifier.span.literal);
+    }
+
     fn visit_struct_decl_statement(&mut self, struct_decl_stmt: &ASTStructDeclStatement) {
         self.add_keyword("struct");
         self.add_whitespace();
@@ -214,7 +220,7 @@ impl ASTVisitor for ASTPrinter<'_> {
     }
 
     fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression) {
-        self.add_text(&struct_init_expression.identifier.span.literal);
+        self.add_text(&struct_init_expression.identifier.to_string());
         self.add_text("{");
         for (i, field_init) in struct_init_expression.fields.iter().enumerate() {
             if i != 0 {
@@ -290,7 +296,7 @@ impl ASTVisitor for ASTPrinter<'_> {
     fn visit_identifier_expression(&mut self, variable_expression: &ASTIdentifierExpression, expr: &ASTExpression) {
         self.result.push_str(&format!("{}{}",
                                       Self::VARIABLE_COLOR.fg_str(),
-                                      variable_expression.identifier.span.literal, ));
+                                      variable_expression.identifier.to_string(), ));
     }
 
     fn visit_number_expression(&mut self, number: &ASTNumberExpression, expr: &ASTExpression) {

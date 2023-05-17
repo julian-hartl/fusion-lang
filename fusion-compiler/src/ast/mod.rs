@@ -69,6 +69,10 @@ impl Ast {
         ASTStatement::new(ASTStatementKind::StructDecl(ASTStructDeclStatement { struct_token, identifier, fields, open_brace, close_brace }))
     }
 
+    pub fn module_decl_statement(&mut self, module_token: Token, identifier: Token) -> ASTStatement {
+        ASTStatement::new(ASTStatementKind::ModDecl(ASTModDeclStatement { mod_token:module_token, identifier }))
+    }
+
     pub fn number_expression(&mut self, token: Token, number: i64) -> ASTExpression {
         ASTExpression::new(ASTExpressionKind::Number(ASTNumberExpression { number, token }))
     }
@@ -85,7 +89,7 @@ impl Ast {
         ASTExpression::new(ASTExpressionKind::Parenthesized(ASTParenthesizedExpression { expression: Box::new(expression), left_paren, right_paren }))
     }
 
-    pub fn identifier_expression(&mut self, identifier: Token) -> ASTExpression {
+    pub fn identifier_expression(&mut self, identifier: QualifiedIdentifier) -> ASTExpression {
         ASTExpression::new(ASTExpressionKind::Identifier(ASTIdentifierExpression { identifier }))
     }
 
@@ -125,7 +129,7 @@ impl Ast {
         ASTExpression::new(ASTExpressionKind::MemberAccess(ASTMemberAccessExpression { expr: Box::new(expression), access_operator, member }))
     }
 
-    pub fn struct_init_expression(&mut self, identifier: Token, open_brace: Token, fields: Vec<ASTStructInitField>, close_brace: Token) -> ASTExpression {
+    pub fn struct_init_expression(&mut self, identifier: QualifiedIdentifier, open_brace: Token, fields: Vec<ASTStructInitField>, close_brace: Token) -> ASTExpression {
         ASTExpression::new(ASTExpressionKind::StructInit(ASTStructInitExpression { identifier, open_brace, fields, close_brace }))
     }
 
@@ -158,6 +162,13 @@ pub enum ASTStatementKind {
     FuncDecl(ASTFuncDeclStatement),
     Return(ASTReturnStatement),
     StructDecl(ASTStructDeclStatement),
+    ModDecl(ASTModDeclStatement),
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTModDeclStatement {
+    pub mod_token: Token,
+    pub identifier: Token,
 }
 
 #[derive(Debug, Clone)]
@@ -458,6 +469,15 @@ impl ASTStatement {
                     spans
                 )
             }
+            ASTStatementKind::ModDecl(stmt) => {
+                let spans = vec![
+                    &stmt.mod_token.span,
+                    &stmt.identifier.span,
+                ];
+                TextSpan::merge(
+                    spans
+                )
+            }
         }
     }
 }
@@ -517,7 +537,7 @@ pub enum ASTExpressionKind {
 
 #[derive(Debug, Clone)]
 pub struct ASTStructInitExpression {
-    pub identifier: Token,
+    pub identifier: QualifiedIdentifier,
     pub open_brace: Token,
     pub close_brace: Token,
     pub fields: Vec<ASTStructInitField>,
@@ -715,15 +735,54 @@ pub struct ASTUnaryExpression {
 }
 
 #[derive(Debug, Clone)]
-pub struct ASTIdentifierExpression {
-    pub identifier: Token,
+pub struct QualifiedIdentifier {
+    pub parts: Vec<Token>,
 }
 
-
-impl ASTIdentifierExpression {
-    pub fn identifier(&self) -> &str {
-        &self.identifier.span.literal
+impl QualifiedIdentifier {
+    pub fn new(parts: Vec<Token>) -> Self {
+        QualifiedIdentifier { parts }
     }
+
+    pub fn span(&self) -> TextSpan {
+        TextSpan::merge(self.parts.iter().map(|p| &p.span).collect())
+    }
+
+    pub fn is_qualified(&self) -> bool {
+        self.parts.len() > 1
+    }
+
+    pub fn get_qualified_name(&self) -> String {
+        let mut result = String::new();
+        for (i, part) in self.parts.iter().enumerate() {
+            if i > 0 {
+                result.push_str("::");
+            }
+            result.push_str(&part.span.literal);
+        }
+        result
+    }
+
+    pub fn get_unqualified_name(&self) -> &Token {
+        &self.parts[self.parts.len() - 1]
+    }
+}
+
+impl Display for QualifiedIdentifier {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (i, part) in self.parts.iter().enumerate() {
+            if i > 0 {
+                write!(f, "::")?;
+            }
+            write!(f, "{}", part.span.literal)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTIdentifierExpression {
+    pub identifier: QualifiedIdentifier,
 }
 
 
@@ -831,7 +890,7 @@ impl ASTExpression {
                 let close_paren = &expr.right_paren.span;
                 TextSpan::merge(vec![open_paren, expression, close_paren])
             }
-            ASTExpressionKind::Identifier(expr) => expr.identifier.span.clone(),
+            ASTExpressionKind::Identifier(expr) => expr.identifier.span(),
             ASTExpressionKind::Assignment(expr) => {
                 let identifier = &expr.assignee.span();
                 let equals = &expr.equals.span;
@@ -933,7 +992,7 @@ mod test {
         pub fn new(input: &str, expected: Vec<TestASTNode>) -> Self {
             let source_text = SourceText::new(input, None);
             let compilation_unit = CompilationUnit::compile(&source_text).expect("Failed to compile");
-            let mut verifier = ASTVerifier { expected, actual: Vec::new(), ast: compilation_unit.ast };
+            let mut verifier = ASTVerifier { expected, actual: Vec::new(), ast: compilation_unit.source_tree };
             verifier.flatten_ast();
             verifier
         }

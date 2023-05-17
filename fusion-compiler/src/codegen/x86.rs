@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::{Display, format};
 
-use crate::hir::{FunctionId, HIRBinaryOperator, Scope, ScopeCell};
+use crate::hir::{FunctionId, HIRBinaryOperator};
 use crate::mir::{GlobalLabel, GlobalPlace, GlobalValue, Instruction, InstructionKind, Label, LocalPlace, MIR, Place, Value, Var};
+use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
 use crate::typings::Layout;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -229,7 +230,7 @@ const INITIAL_BASE_POINTER_OFFSET: u32 = 8;
 pub struct X86Codegen<'a> {
     var_addr: HashMap<Var, i32>,
     mir: &'a MIR,
-    scope: ScopeCell,
+    scope: GlobalScopeCell,
     asm: String,
     base_pointer_offset: u32,
 }
@@ -237,7 +238,7 @@ pub struct X86Codegen<'a> {
 impl<'a> X86Codegen<'a> {
     pub fn new(
         mir: &'a MIR,
-        scope: ScopeCell,
+        scope: GlobalScopeCell,
     ) -> Self {
         Self {
             mir,
@@ -402,7 +403,7 @@ impl<'a> X86Codegen<'a> {
                 let function = scope.get_function(function_id);
                 let function_name = function.name.clone();
                 drop(scope);
-                self.push_instruction(X86Instruction::Call(function_name));
+                self.push_instruction(X86Instruction::Call(function_name.to_string()));
                 self.push_instruction(X86Instruction::Add(
                     X86Operand::Register(X86Register::RSP),
                     X86Operand::Immediate(X86Immediate::QWord(arg_size as i64)),

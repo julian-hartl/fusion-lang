@@ -1,18 +1,15 @@
-use std::path::Path;
 
 pub mod span;
 pub mod io;
 
 pub struct SourceText {
     pub text: String,
-    pub path: Option<String>,
 }
 
 impl SourceText {
-    pub fn new(text: &str, path: Option<&str>) -> Self {
+    pub fn new(text: String) -> Self {
         Self {
-            text: text  .to_string(),
-            path: path.map(|path| path.to_string()),
+            text,
         }
     }
 

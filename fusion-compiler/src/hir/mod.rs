@@ -5,10 +5,13 @@ use std::rc::Rc;
 
 use fusion_compiler::{id, id_generator, Result};
 
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTLetStatement, ASTMemberAccessExpression, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, TypeSyntax};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, TypeSyntax};
 use crate::ast::lexer::{Token, TokenKind};
 use crate::ast::visitor::ASTVisitor;
+use crate::compilation::SourceTree;
 use crate::diagnostics::DiagnosticsBagCell;
+use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
+use crate::modules::symbols::{Function, ModuleId};
 use crate::text::span::TextSpan;
 use crate::typings::{Layout, Type};
 
@@ -522,8 +525,9 @@ mod common {
     use crate::ast::{ASTFuncDeclStatement, ASTLetStatement, FuncDeclParameter};
     use crate::ast::lexer::Token;
     use crate::diagnostics::{DiagnosticsBag, DiagnosticsBagCell};
-    use crate::hir::{FunctionModifier, HIRGen, HIRStatementKind, HIRVariableDeclarationStatement, Variable, VariableId};
+    use crate::hir::{HIRGen, HIRStatementKind, HIRVariableDeclarationStatement, VariableId};
     use crate::hir;
+    use crate::modules::symbols::{FunctionModifier, Variable};
     use crate::typings::Type;
 
     fn resolve_func_modifier(modifier: &Token, diagnostics_bag: DiagnosticsBagCell) -> Result<FunctionModifier> {
@@ -543,23 +547,11 @@ mod common {
                 FuncDeclParameter::Normal(param) => {
                     let name = param.identifier.span.literal.clone();
                     let ty = hir_gen.resolve_type_syntax(&param.type_annotation.ty);
-                    let id = hir_gen.scope.borrow_mut().variable_id_gen.borrow_mut().next();
-                    let variable = Variable {
-                        name,
-                        ty,
-                        id,
-                        is_mutable: param.mut_token.is_some(),
-                    };
-                    variable
+                    hir_gen.scope.borrow_mut().declare_variable(name.clone(), ty,param.mut_token.is_some())
                 }
                 FuncDeclParameter::Self_(self_param) => {
                     diagnostics_bag.borrow_mut().report_self_outside_class(&self_param.span);
-                    Variable {
-                        name: String::from("self"),
-                        ty: Type::Error,
-                        id: hir_gen.scope.borrow_mut().variable_id_gen.borrow_mut().next(),
-                        is_mutable: false,
-                    }
+                    hir_gen.scope.borrow_mut().declare_variable("self".to_string(), Type::Void, false)
                 }
             }
         }).collect();
@@ -621,14 +613,14 @@ impl HIR {
             .push(stmt);
     }
 
-    pub fn functions<'a>(&self, scope: &'a Scope) -> HashMap<&'a Function, Option<&Vec<HIRStatement>>> {
-        scope.functions.iter().map(|(_, function)| {
+    pub fn functions<'a>(&self, scope: &'a GlobalScope) -> HashMap<&'a Function, Option<&Vec<HIRStatement>>> {
+        scope.functions().iter().map(|(_, function)| {
             let body = self.function_bodies.get(&function.id);
             (function, body)
         }).collect()
     }
 
-    pub fn visualize(&self, scope: ScopeCell) {
+    pub fn visualize(&self, scope: GlobalScopeCell) {
         let visualizer = visualization::HIRVisualizer::new(self, scope);
         let output = visualizer.visualize();
         println!("{}", output);
@@ -640,328 +632,26 @@ impl HIR {
 
 id!(VariableId);
 id_generator!(VariableIdGenerator, VariableId);
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Variable {
-    pub name: String,
-    pub ty: Type,
-    pub id: VariableId,
-    pub is_mutable: bool,
-}
 
 id!(FunctionId);
 id_generator!(FunctionIdGenerator, FunctionId);
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Function {
-    pub name: String,
-    pub parameters: Vec<VariableId>,
-    pub return_type: Type,
-    pub id: FunctionId,
-    pub modifiers: Vec<FunctionModifier>,
-}
-
-impl Function {
-    pub fn is_extern(&self) -> bool {
-        self.modifiers.contains(&FunctionModifier::Extern)
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub enum FunctionModifier {
-    Extern,
-}
 
 id!(StructId);
 id_generator!(StructIdGenerator, StructId);
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Struct {
-    pub name: String,
-    pub fields: Vec<FieldId>,
-    pub id: StructId,
-}
-
-impl Struct {
-    pub fn ty(&self) -> Type {
-        Type::Struct(self.id)
-    }
-
-    pub fn layout(&self, scope: &Scope) -> Layout {
-        let mut size = 0;
-        let mut alignment = 0;
-        for field in self.fields.iter() {
-            let field = scope.get_field(field);
-            let field_layout = field.ty.layout(scope);
-            size += field_layout.size;
-            alignment = alignment.max(field_layout.alignment);
-        }
-        Layout {
-            size,
-            alignment,
-        }
-    }
-}
 
 id!(FieldId);
 id_generator!(FieldIdGenerator, FieldId);
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct StructField {
-    pub name: String,
-    pub ty: Type,
-    pub id: FieldId,
-    pub struct_id: StructId,
-}
-
-struct LocalScope {
-    variables: Vec<VariableId>,
-    variable_id_gen: Rc<RefCell<VariableIdGenerator>>,
-}
-
-impl LocalScope {
-    pub fn new(variable_id_gen: Rc<RefCell<VariableIdGenerator>>) -> Self {
-        Self {
-            variables: Vec::new(),
-            variable_id_gen,
-        }
-    }
-}
-
-pub type ScopeCell = Rc<RefCell<Scope>>;
-
-pub struct Scope {
-    pub functions: HashMap<FunctionId, Function>,
-    function_id_gen: FunctionIdGenerator,
-    variables: HashMap<VariableId, Variable>,
-    global_variables: HashSet<VariableId>,
-    variable_id_gen: Rc<RefCell<VariableIdGenerator>>,
-    structs: HashMap<StructId, Struct>,
-    struct_id_gen: StructIdGenerator,
-    fields: HashMap<FieldId, StructField>,
-    field_id_gen: FieldIdGenerator,
-    local_scopes: Vec<LocalScope>,
-    surrounding_function: Option<FunctionId>,
-}
-
-impl Scope {
-    pub(crate) fn new() -> Self {
-        Self {
-            functions: HashMap::new(),
-            local_scopes: Vec::new(),
-            function_id_gen: FunctionIdGenerator::new(),
-            variables: HashMap::new(),
-            variable_id_gen: Rc::new(RefCell::new(VariableIdGenerator::new())),
-            structs: HashMap::new(),
-            struct_id_gen: StructIdGenerator::new(),
-            fields: HashMap::new(),
-            field_id_gen: FieldIdGenerator::new(),
-            surrounding_function: None,
-            global_variables: HashSet::new(),
-        }
-    }
-
-    fn declare_structs(&mut self, name: String) -> Result<StructId> {
-        let id = self.struct_id_gen.next();
-        let struct_ = Struct {
-            name,
-            fields: Vec::new(),
-            id,
-        };
-        if self.lookup_struct(&struct_.name).is_some() {
-            return Err(());
-        }
-        self.structs.insert(id, struct_);
-        Ok(id)
-    }
-
-    fn set_struct_fields(&mut self, id: &StructId, fields: Vec<(String, Type)>) -> Result<()> {
-        let struct_ = self.structs.get_mut(id).ok_or(())?;
-        struct_.fields = fields.into_iter().map(|(name, ty)| {
-            let struct_id = *id;
-            let id = self.field_id_gen.next();
-            let field = StructField {
-                name,
-                ty,
-                id,
-                struct_id,
-            };
-            self.fields.insert(id, field);
-            id
-        }).collect();
-        Ok(())
-    }
-
-    fn lookup_struct(&self, name: &str) -> Option<StructId> {
-        self.structs
-            .iter()
-            .find(|(_, struct_)| struct_.name == name)
-            .map(|(id, _)| *id)
-    }
-
-    fn lookup_field(&self, struct_id: &StructId, name: &str) -> Option<FieldId> {
-        let struct_ = self.structs.get(struct_id)?;
-        struct_.fields.iter().find(|field_id| {
-            let field = self.get_field(field_id);
-            field.name == name
-        }).map(|field_id| *field_id)
-    }
-
-    pub fn get_field(&self, id: &FieldId) -> &StructField {
-        self.fields.get(id).unwrap()
-    }
-
-    pub fn get_field_offset(&self, id: &FieldId) -> u32 {
-        let field = self.get_field(id);
-        let struct_ = self.get_struct(&field.struct_id);
-        let mut offset = 0;
-        for field_id in &struct_.fields {
-            if field_id == id {
-                return offset;
-            }
-            let field = self.get_field(field_id);
-            offset += field.ty.layout(self).size;
-        }
-        unreachable!()
-    }
-
-    pub fn get_struct(&self, id: &StructId) -> &Struct {
-        self.structs.get(id).unwrap()
-    }
-
-    fn declare_function(
-        &mut self,
-        name: String,
-        parameters: Vec<Variable>,
-        return_type: Type,
-        modifiers: Vec<FunctionModifier>,
-    ) -> Result<FunctionId> {
-        let id = self.function_id_gen.next();
-        for parameter in &parameters {
-            self.variables.insert(parameter.id, parameter.clone());
-        }
-        let function = Function {
-            name,
-            parameters: parameters.iter().map(|p| p.id).collect(),
-            return_type,
-            id,
-            modifiers,
-        };
-        if self.lookup_function(&function.name).is_some() {
-            return Err(());
-        }
-        self.functions.insert(id, function);
-        Ok(id)
-    }
-
-    pub fn get_function(&self, id: &FunctionId) -> &Function {
-        self.functions.get(&id).unwrap()
-    }
-
-    fn lookup_function(&self, name: &str) -> Option<FunctionId> {
-        self.functions
-            .iter()
-            .find(|(_, f)| f.name == name)
-            .map(|(id, _)| id.clone())
-    }
-
-    fn declare_variable(
-        &mut self,
-        name: String,
-        ty: Type,
-        is_mutable: bool,
-    ) -> VariableId {
-        let id = self.variable_id_gen.borrow_mut().next();
-        let variable = Variable { name, ty, id, is_mutable };
-        let is_shadowing = self.lookup_variable(&variable.name).is_some();
-        self.variables.insert(id, variable);
-        match self.current_local_scope() {
-            Some(local_scope) => {
-                local_scope.variables.push(id);
-            }
-            None => {
-                if !is_shadowing {
-                    self.global_variables.insert(id);
-                }
-            }
-        }
-        id
-    }
-
-    fn current_local_scope(&mut self) -> Option<&mut LocalScope> {
-        self.local_scopes.last_mut()
-    }
-
-    fn lookup_variable(&self, name: &str) -> Option<VariableId> {
-        for local_scope in self.local_scopes.iter().rev() {
-            // todo: handle shadowing
-            for var in local_scope.variables.iter().rev() {
-                let var = self.get_variable(var);
-                if var.name == name {
-                    return Some(var.id);
-                }
-            }
-            for var in self.global_variables.iter() {
-                let var = self.get_variable(var);
-                if var.name == name {
-                    return Some(var.id);
-                }
-            }
-        }
-        None
-    }
-
-    pub fn get_variable(&self, id: &VariableId) -> &Variable {
-        self.variables.get(&id).unwrap()
-    }
-
-    fn resolve_type_from_identifier(
-        &self,
-        token: &Token,
-    ) -> Option<Type> {
-        let name = &token.span.literal;
-        if let Some(ty) = Type::get_builtin_type(name) {
-            return Some(ty);
-        }
-        if let Some(id) = self.lookup_struct(name) {
-            return Some(Type::Struct(id));
-        }
-        None
-    }
-
-    fn enter_local_scope(&mut self) {
-        self.local_scopes.push(LocalScope::new(self.variable_id_gen.clone()));
-    }
-
-    fn exit_local_scope(&mut self) {
-        self.local_scopes.pop();
-    }
-
-    fn enter_function_scope(&mut self, function_id: FunctionId) {
-        self.surrounding_function = Some(function_id);
-        self.enter_local_scope();
-        let function = self.get_function(&function_id);
-        for parameter_id in function.parameters.clone() {
-            self.current_local_scope()
-                .unwrap()
-                .variables
-                .push(parameter_id);
-        }
-    }
-
-    fn exit_function_scope(&mut self) {
-        self.surrounding_function = None;
-        self.exit_local_scope();
-    }
-}
-
 pub struct HIRGen {
     hir: HIR,
     diagnostics_bag: DiagnosticsBagCell,
-    scope: ScopeCell,
+    scope: GlobalScopeCell,
 }
 
 impl HIRGen {
     pub fn new(
         diagnostics_bag: DiagnosticsBagCell,
-        scope: ScopeCell,
+        scope: GlobalScopeCell,
     ) -> Self {
         Self {
             diagnostics_bag,
@@ -970,16 +660,31 @@ impl HIRGen {
         }
     }
 
-    pub fn gen(mut self, ast: &Ast) -> HIR {
+    pub fn gen(mut self, tree: &SourceTree) -> HIR {
         // todo: handle top level statements
+        let root_id = self.scope.borrow().root_module;
+        self.traverse_tree(&tree, root_id);
+        self.hir
+    }
+
+    fn traverse_tree(&mut self, tree: &SourceTree, module_id: ModuleId) {
+        let scope = self.scope.borrow();
+        let module = scope.get_module(&module_id);
+
+        let submodules = module.submodules.clone();
+        drop(scope);
+        for mod_id in submodules {
+            self.traverse_tree(tree, mod_id);
+        }
+        let ast = tree.asts.get(&module_id).unwrap();
+        self.scope.borrow_mut().set_current_module(module_id);
         self.gather_global_symbols(ast);
         self.gen_function_bodies(ast);
-        self.hir
     }
 
     fn gather_global_symbols(&mut self, ast: &Ast) {
         for struct_ in &ast.structs {
-            let id = self.scope.borrow_mut().declare_structs(struct_.span.literal.clone());
+            let id = self.scope.borrow_mut().declare_struct(struct_.span.literal.clone());
             if id.is_err() {
                 self.diagnostics_bag.borrow_mut().report_struct_already_declared(
                     &struct_,
@@ -1007,7 +712,7 @@ impl HIRGen {
                 ASTStatementKind::FuncDecl(stmt) => {
                     let body = &stmt.body;
                     if let Some(body) = body {
-                        let function_id = self.scope.borrow_mut().lookup_function(&stmt.identifier.span.literal).expect(format!("ICE: function {} not found", stmt.identifier.span.literal).as_str());
+                        let function_id = self.scope.borrow_mut().lookup_function_unqualified(&stmt.identifier.span.literal).expect(format!("ICE: function {} not found", stmt.identifier.span.literal).as_str());
                         self.scope.borrow_mut().enter_function_scope(function_id);
                         for stmt in body {
                             let stmt = self.gen_statement(stmt);
@@ -1078,7 +783,7 @@ impl HIRGen {
                     span: stmt.span(),
                 });
                 let scope = self.scope.borrow();
-                match &scope.surrounding_function {
+                match &scope.get_surrounding_function() {
                     None => {
                         self.diagnostics_bag.borrow_mut().report_cannot_return_outside_function(&return_stmt.return_keyword);
                     }
@@ -1093,6 +798,9 @@ impl HIRGen {
             }
             ASTStatementKind::StructDecl(_) => {
                 unreachable!("ICE: struct declarations should be handled in gather_global_symbols")
+            }
+            ASTStatementKind::ModDecl(_) => {
+                unreachable!()
             }
         };
         HIRStatement { kind, span: stmt.span() }
@@ -1146,7 +854,11 @@ impl HIRGen {
             }
             ASTExpressionKind::Identifier(expr) => {
                 // todo: for now we assume that the identifier references a variable
-                let variable_id = self.scope.borrow_mut().lookup_variable(&expr.identifier.span.literal);
+                if expr.identifier.is_qualified() {
+                    self.diagnostics_bag.borrow_mut().report_unexpected_qualified_identifier(&expr.identifier);
+                }
+                let identifier = expr.identifier.get_unqualified_name();
+                let variable_id = self.scope.borrow_mut().lookup_variable(&identifier.span.literal);
                 match variable_id {
                     Some(variable_id) => {
                         let scope = self.scope.borrow();
@@ -1158,7 +870,7 @@ impl HIRGen {
                         (expr, ty)
                     }
                     None => {
-                        self.diagnostics_bag.borrow_mut().report_undeclared_variable(&expr.identifier);
+                        self.diagnostics_bag.borrow_mut().report_undeclared_variable(&identifier);
                         (HIRExpressionKind::Void, Type::Error)
                     }
                 }
@@ -1296,7 +1008,7 @@ impl HIRGen {
                         let ty = if let Some(member) = member {
                             scope.get_field(&member).ty.clone()
                         } else {
-                            self.diagnostics_bag.borrow_mut().report_struct_has_no_member(&expr.expr.span(), &struct_.name);
+                            self.diagnostics_bag.borrow_mut().report_struct_has_no_member(&expr.expr.span(), &struct_.name.name);
                             Type::Error
                         };
                         (ty, member.unwrap_or(FieldId::new(0)))
@@ -1313,10 +1025,11 @@ impl HIRGen {
                 (expr, ty)
             }
             ASTExpressionKind::StructInit(expr) => {
-                let struct_id = self.scope.borrow_mut().lookup_struct(&expr.identifier.span.literal);
+                let identifier = expr.identifier.get_qualified_name();
+                let struct_id = self.scope.borrow_mut().lookup_struct_qualified(&identifier);
                 let (struct_id, fields) = match struct_id {
                     None => {
-                        self.diagnostics_bag.borrow_mut().report_undeclared_struct(&expr.identifier.span);
+                        self.diagnostics_bag.borrow_mut().report_undeclared_struct(&expr.identifier.span(), &identifier);
                         (StructId::new(0), vec![])
                     }
                     Some(struct_id) => {
@@ -1337,7 +1050,7 @@ impl HIRGen {
                             } else {
                                 let struct_ = scope.get_struct(&struct_id);
 
-                                self.diagnostics_bag.borrow_mut().report_struct_has_no_member(&field.identifier.span, &struct_.name);
+                                self.diagnostics_bag.borrow_mut().report_struct_has_no_member(&field.identifier.span, struct_.name.unqualified_name());
                             }
                         }
                         (struct_id, fields)
@@ -1414,14 +1127,15 @@ impl HIRGen {
     fn resolve_callee(&mut self, callee: &ASTExpression) -> HIRCallee {
         match &callee.kind {
             ASTExpressionKind::Identifier(expr) => {
-                let function_id = self.scope.borrow_mut().lookup_function(&expr.identifier.span.literal);
+                let identifier = expr.identifier.get_unqualified_name();
+                let function_id = self.scope.borrow_mut().lookup_function_unqualified(&identifier.span.literal);
                 match function_id {
                     Some(function_id) => {
                         HIRCallee::Function(function_id)
                     }
                     None => {
-                        self.diagnostics_bag.borrow_mut().report_undeclared_function(&expr.identifier);
-                        HIRCallee::Undeclared(expr.identifier.span.literal.clone())
+                        self.diagnostics_bag.borrow_mut().report_undeclared_function(&identifier);
+                        HIRCallee::Undeclared(identifier.span.literal.clone())
                     }
                 }
             }
@@ -1623,8 +1337,10 @@ impl ASTVisitor for HIRGlobalSymbolGatherer<'_> {
         self.ast
     }
 
+    fn visit_mod_decl_statement(&mut self, mod_decl_stmt: &ASTModDeclStatement) {}
+
     fn visit_struct_decl_statement(&mut self, struct_decl_stmt: &ASTStructDeclStatement) {
-        let id = self.hir_gen.scope.borrow().lookup_struct(&struct_decl_stmt.identifier.span.literal).unwrap();
+        let id = self.hir_gen.scope.borrow().lookup_struct_unqualified(&struct_decl_stmt.identifier.span.literal).unwrap();
         let fields = struct_decl_stmt.fields.iter().map(|f| {
             let ty = self.hir_gen.resolve_type_syntax(&f.ty.ty);
             (f.identifier.span.literal.clone(), ty)

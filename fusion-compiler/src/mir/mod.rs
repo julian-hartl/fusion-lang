@@ -2,14 +2,16 @@ use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io::Write;
-use std::ops::{Deref};
+use std::ops::Deref;
 use std::rc::Rc;
 
 use fusion_compiler::{id, id_generator};
 
 use crate::diagnostics::DiagnosticsBagCell;
 use crate::hir;
-use crate::hir::{Function, FunctionId, HIR, HIRAssignmentTargetKind, HIRBinaryOperator, HIRCallee, HIRExpression, HIRExpressionKind, HIRFunction, HIRGlobal, HIRLiteralValue, HIRStatement, HIRStatementKind, HIRUnaryOperator, Scope, ScopeCell, Variable, VariableId};
+use crate::hir::{FunctionId, HIR, HIRAssignmentTargetKind, HIRBinaryOperator, HIRCallee, HIRExpression, HIRExpressionKind, HIRFunction, HIRGlobal, HIRLiteralValue, HIRStatement, HIRStatementKind, HIRUnaryOperator, VariableId};
+use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
+use crate::modules::symbols::{Function, Variable};
 use crate::text::span::TextSpan;
 use crate::typings::{Layout, Type};
 
@@ -28,7 +30,7 @@ impl Body {
     pub fn new(
         function: FunctionId,
         label_gen: Rc<RefCell<LabelGenerator>>,
-        scope: ScopeCell,
+        scope: GlobalScopeCell,
     ) -> Self {
         Self {
             scope: MIRScope::new(scope),
@@ -130,14 +132,14 @@ pub struct MIRScope {
     pub place_count: u32,
     mapped_variables: HashMap<VariableId, LocalPlace>,
     pub(crate) locals: Vec<VariableId>,
-    scope: ScopeCell,
+    scope: GlobalScopeCell,
     pub locals_size: u32,
     nesting_level: u32,
 }
 
 impl MIRScope {
     pub fn new(
-        scope: ScopeCell,
+        scope: GlobalScopeCell,
     ) -> Self {
         Self {
             place_count: 0,
@@ -168,7 +170,7 @@ impl MIRScope {
         temp
     }
 
-    fn get_scope(&self) -> Ref<Scope> {
+    fn get_scope(&self) -> Ref<GlobalScope> {
         self.scope.borrow()
     }
 
@@ -194,7 +196,7 @@ pub struct Instruction {
 impl Instruction {
     fn format(
         &self,
-        scope: &Scope,
+        scope: &GlobalScope,
     ) -> String {
         match &self.kind {
             InstructionKind::Store { place, value: init } => {
@@ -602,14 +604,14 @@ impl MIR {
 
     pub fn output_graphviz(
         &self,
-        scope: &Scope,
+        scope: &GlobalScope,
         filename: &str,
     ) {
         let mut file = std::fs::File::create(filename).unwrap();
         file.write_all(self.graphviz(scope).as_bytes()).unwrap();
     }
 
-    pub fn graphviz(&self, scope: &Scope) -> String {
+    pub fn graphviz(&self, scope: &GlobalScope) -> String {
         let mut s = String::new();
         s.push_str("digraph {\n");
         for body in &self.bodies {
@@ -644,12 +646,12 @@ impl MIR {
         s
     }
 
-    pub fn save_output(&self, scope: &Scope, filename: &str) {
+    pub fn save_output(&self, scope: &GlobalScope, filename: &str) {
         let mut file = std::fs::File::create(filename).unwrap();
         file.write_all(self.output(scope).as_bytes()).unwrap();
     }
 
-    pub fn output(&self, scope: &Scope) -> String {
+    pub fn output(&self, scope: &GlobalScope) -> String {
         let mut s = String::new();
         for body in &self.bodies {
             let function = scope.get_function(&body.function);
@@ -681,7 +683,7 @@ impl MIR {
         s
     }
 
-    pub fn interpret(&self, scope: &hir::Scope) {
+    pub fn interpret(&self, scope: &GlobalScope) {
         // let mut interpreter = Interpreter::new(self, scope);
         // interpreter.interpret();
     }
@@ -689,7 +691,7 @@ impl MIR {
 
 pub struct MIRGen {
     pub ir: MIR,
-    pub scope: ScopeCell,
+    pub scope: GlobalScopeCell,
     diagnostics: DiagnosticsBagCell,
     label_generator: Rc<RefCell<LabelGenerator>>,
     global_scope: Rc<RefCell<GlobalMIRScope>>,
@@ -698,7 +700,7 @@ pub struct MIRGen {
 impl MIRGen {
     pub fn new(
         diagnostics: DiagnosticsBagCell,
-        scope: ScopeCell,
+        scope: GlobalScopeCell,
     ) -> Self {
         Self {
             ir: MIR::new(),
@@ -765,12 +767,12 @@ pub struct BodyGen {
     pub body: Body,
     pub basic_blocks: Vec<BasicBlock>,
     pub current_block: usize,
-    pub scope: ScopeCell,
+    pub scope: GlobalScopeCell,
     pub global_scope: Rc<RefCell<GlobalMIRScope>>,
 }
 
 impl BodyGen {
-    pub fn new(mut body: Body, scope: ScopeCell,
+    pub fn new(mut body: Body, scope: GlobalScopeCell,
                global_scope: Rc<RefCell<GlobalMIRScope>>,
     ) -> Self {
         Self {
