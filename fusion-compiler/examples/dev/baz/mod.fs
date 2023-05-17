@@ -1,9 +1,9 @@
 mod test
 
 struct Baz {
-    baz: bool
+    baz: i64
 }
 
 func baz() -> Baz {
-    Baz { baz: true }
+    Baz { baz: 8 }
 }

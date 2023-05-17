@@ -4,6 +4,7 @@ use std::fmt::{Display, format};
 use crate::hir::{FunctionId, HIRBinaryOperator};
 use crate::mir::{GlobalLabel, GlobalPlace, GlobalValue, Instruction, InstructionKind, Label, LocalPlace, MIR, Place, Value, Var};
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
+use crate::modules::symbols::{Function, QualifiedName};
 use crate::typings::Layout;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -305,7 +306,7 @@ impl<'a> X86Codegen<'a> {
         self.var_addr.clear();
         let scope = self.scope.borrow();
         let function = scope.get_function(&body.function);
-        self.asm.push_str(&format!("{}:\n", function.name));
+        self.asm.push_str(&format!("{}:\n", self.format_qualified_name(&function.name)));
         drop(scope);
         let mut offset = -16;
         for param in &body.parameters {
@@ -328,6 +329,10 @@ impl<'a> X86Codegen<'a> {
         for bb in body.basic_blocks.iter() {
             self.gen_basic_block(bb);
         }
+    }
+
+    fn format_qualified_name(&self, name: &QualifiedName) -> String {
+        name.name.replace(":", "_")
     }
 
     fn clear_stack_frame(&mut self) {
@@ -401,9 +406,9 @@ impl<'a> X86Codegen<'a> {
                 let arg_size = self.layout_function_call_args(args);
                 let scope = self.scope.borrow();
                 let function = scope.get_function(function_id);
-                let function_name = function.name.clone();
+                let function_name = self.format_qualified_name(&function.name);
                 drop(scope);
-                self.push_instruction(X86Instruction::Call(function_name.to_string()));
+                self.push_instruction(X86Instruction::Call(function_name));
                 self.push_instruction(X86Instruction::Add(
                     X86Operand::Register(X86Register::RSP),
                     X86Operand::Immediate(X86Immediate::QWord(arg_size as i64)),

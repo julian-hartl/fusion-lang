@@ -6,6 +6,6 @@ func main -> i64 {
     let foo = foo::foo()
     let baz = baz::baz()
 
-    return 0
+    return baz.baz
 
 }
