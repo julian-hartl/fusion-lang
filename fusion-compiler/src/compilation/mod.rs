@@ -5,12 +5,10 @@ use std::ops::Deref;
 use std::path::Path;
 use std::rc::Rc;
 
-use inkwell::targets::{InitializationConfig, Target};
 
 use crate::ast::Ast;
 use crate::ast::lexer::Lexer;
 use crate::ast::parser::Parser;
-// use crate::codegen::llvm::{LLVMCodegen, LLVMTypeBuilder};
 use crate::diagnostics::{DiagnosticsBag, DiagnosticsBagCell};
 use crate::diagnostics::printer::DiagnosticsPrinter;
 use crate::formatting::Formatter;
