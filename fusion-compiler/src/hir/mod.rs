@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use fusion_compiler::{id, id_generator, Result};
 
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, QualifiedIdentifier, TypeSyntax};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIndexExpression, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, QualifiedIdentifier, TypeSyntax};
 use crate::ast::lexer::{Token, TokenKind};
 use crate::ast::visitor::ASTVisitor;
 use crate::compilation::SourceTree;
@@ -116,7 +116,13 @@ pub enum HIRExpressionKind {
     Deref(HIRDerefExpression),
     Cast(HIRCastExpression),
     StructInit(HIRStructInitExpression),
+    Index(HIRIndexExpression),
     Void,
+}
+
+pub struct HIRIndexExpression {
+    pub target: Box<HIRExpression>,
+    pub index: Box<HIRExpression>,
 }
 
 pub struct HIRStructInitExpression {
@@ -680,8 +686,9 @@ impl HIRGen {
         for mod_id in submodules {
             self.traverse_tree(tree, mod_id);
         }
-        let ast = tree.asts.get(&module_id).unwrap();
+        let (ast,_) = tree.asts.get(&module_id).unwrap();
         self.scope.borrow_mut().set_current_module(module_id);
+        self.diagnostics_bag.borrow_mut().set_current_module(module_id);
         self.gather_global_symbols(ast);
         self.gen_function_bodies(ast);
     }
@@ -1078,6 +1085,28 @@ impl HIRGen {
                     }
                 }
             }
+            ASTExpressionKind::Index(expr) => {
+                let target = self.gen_expression(&expr.target);
+                let index = self.gen_expression(&expr.index);
+                self.ensure_type_match(&index.span, &index.ty, &Type::I64);
+                let ty = match &target.ty {
+                    Type::Ptr(inner,_) => {
+                        *inner.clone()
+                    }
+                    Type::Error => {
+                        Type::Error
+                    }
+                    _ => {
+                        self.diagnostics_bag.borrow_mut().report_cannot_index_type(&expr.target.span(), &target.ty);
+                        Type::Error
+                    }
+                };
+                let expr = HIRExpressionKind::Index(HIRIndexExpression {
+                    target: Box::new(target),
+                    index: Box::new(index),
+                });
+                (expr, ty)
+            }
         };
         HIRExpression {
             kind,
@@ -1412,6 +1441,10 @@ impl ASTVisitor for HIRGlobalSymbolGatherer<'_> {
     fn visit_let_statement(&mut self, let_statement: &ASTLetStatement, statement: &ASTStatement) {
         let variable_declaration_stmt = common::declare_variable(self.hir_gen, let_statement);
         self.global_initializers.push((variable_declaration_stmt.variable_id, variable_declaration_stmt.initializer));
+    }
+
+    fn visit_index_expression(&mut self, index_expression: &ASTIndexExpression, expr: &ASTExpression) {
+
     }
 
     fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression) {}

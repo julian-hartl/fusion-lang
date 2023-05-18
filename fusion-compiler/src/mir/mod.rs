@@ -229,6 +229,9 @@ impl Instruction {
             InstructionKind::Deref { from, to } => {
                 format!("{} = deref {}", to, from)
             }
+            InstructionKind::Index { base, index, result_place } => {
+                format!("{} = index {} {}", result_place, base, index)
+            }
         }
     }
 
@@ -547,6 +550,7 @@ pub enum InstructionKind {
     UnaryOp { operator: HIRUnaryOperator, operand: Value, result_place: LocalPlace },
     Move { to: LocalPlace, from: Place },
     Deref { to: LocalPlace, from: Place },
+    Index { result_place: LocalPlace, base: Place, index: Place },
 }
 
 #[derive(Debug)]
@@ -1107,6 +1111,24 @@ impl BodyGen {
                         value
                     }
                 }
+            }
+            HIRExpressionKind::Index(index_expr) => {
+                let target = self.gen_expr(&index_expr.target, None);
+                let index_place = self.gen_expr_as_place(&index_expr.index);
+                let base_place = target.into_place();
+                let place = (store_at.copied()).unwrap_or(self.body.scope.new_local_place(
+                    expr.ty.layout(&self.scope.borrow()),
+                ));
+                let instruction = Instruction {
+                    kind: InstructionKind::Index {
+                        result_place: place,
+                        base: base_place,
+                        index: index_place,
+                    },
+                    span: expr.span.clone(),
+                };
+                self.push_instruction(instruction);
+                Value::StoredAt(place.into_place())
             }
         }
     }

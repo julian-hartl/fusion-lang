@@ -1,4 +1,10 @@
-use std::ops::Deref;
+use crate::modules::symbols::ModuleId;
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct TextLocation {
+    pub span: TextSpan,
+    pub module_id: ModuleId,
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct TextSpan {

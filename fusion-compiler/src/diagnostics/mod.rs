@@ -3,7 +3,8 @@ use std::rc::Rc;
 
 use crate::ast::lexer::{Token, TokenKind};
 use crate::ast::QualifiedIdentifier;
-use crate::text::span::TextSpan;
+use crate::modules::symbols::ModuleId;
+use crate::text::span::{TextLocation, TextSpan};
 use crate::typings::Type;
 
 pub mod printer;
@@ -18,13 +19,13 @@ pub enum DiagnosticSeverity {
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     pub message: String,
-    pub span: TextSpan,
+    pub location: TextLocation,
     pub severity: DiagnosticSeverity,
 }
 
 impl Diagnostic {
-    pub fn new(message: String, span: TextSpan, kind: DiagnosticSeverity) -> Self {
-        Diagnostic { message, span, severity: kind }
+    pub fn new(message: String, location: TextLocation, kind: DiagnosticSeverity) -> Self {
+        Diagnostic { message, location, severity: kind }
     }
 }
 
@@ -33,11 +34,19 @@ pub type DiagnosticsBagCell = Rc<RefCell<DiagnosticsBag>>;
 #[derive(Debug)]
 pub struct DiagnosticsBag {
     pub diagnostics: Vec<Diagnostic>,
+    current_module_id: ModuleId,
 }
 
 impl DiagnosticsBag {
-    pub fn new() -> Self {
-        DiagnosticsBag { diagnostics: vec![] }
+    pub fn new(
+        current_module_id: ModuleId,
+    ) -> Self {
+        DiagnosticsBag { diagnostics: vec![] , current_module_id }
+    }
+
+
+    pub fn set_current_module(&mut self, id: ModuleId) {
+        self.current_module_id = id;
     }
 
     pub fn has_errors(&self) -> bool {
@@ -45,13 +54,19 @@ impl DiagnosticsBag {
     }
 
     pub fn report_error(&mut self, message: String, span: TextSpan) {
-        let error = Diagnostic::new(message, span, DiagnosticSeverity::Error);
+        let location = self.span_to_location(span);
+        let error = Diagnostic::new(message, location, DiagnosticSeverity::Error);
         self.diagnostics.push(error);
     }
 
     pub fn report_warning(&mut self, message: String, span: TextSpan) {
-        let warning = Diagnostic::new(message, span, DiagnosticSeverity::Warning);
+        let location = self.span_to_location(span);
+        let warning = Diagnostic::new(message, location, DiagnosticSeverity::Warning);
         self.diagnostics.push(warning);
+    }
+
+    fn span_to_location(&mut self, span: TextSpan) -> TextLocation {
+        TextLocation { span, module_id: self.current_module_id }
     }
 
     pub fn report_unexpected_token(&mut self, expected: &TokenKind, token: &Token) {
@@ -223,6 +238,10 @@ impl DiagnosticsBag {
     pub fn report_module_not_found(&mut self, span: &TextSpan) {
         self.report_error(format!("Module '{}' not found", span.literal), span.clone());
     }
+
+    pub fn report_cannot_index_type(&mut self, span: &TextSpan, ty: &Type) {
+        self.report_error(format!("Cannot index type '{}'", ty), span.clone());
+    }
 }
 
 #[cfg(test)]
@@ -294,9 +313,9 @@ mod test {
 
             for (actual, expected) in self.actual.iter().zip(self.expected.iter()) {
                 assert_eq!(actual.message, expected.message, "Expected message '{}', found '{}'", expected.message, actual.message);
-                assert_eq!(actual.span.start, expected.span.start, "Expected start index {}, found {}", expected.span.start, actual.span.start);
-                assert_eq!(actual.span.end, expected.span.end, "Expected end index {}, found {}", expected.span.end, actual.span.end);
-                assert_eq!(actual.span.literal, expected.span.literal, "Expected literal '{}', found '{}'", expected.span.literal, actual.span.literal);
+                assert_eq!(actual.location.start, expected.location.start, "Expected start index {}, found {}", expected.location.start, actual.location.start);
+                assert_eq!(actual.location.end, expected.location.end, "Expected end index {}, found {}", expected.location.end, actual.location.end);
+                assert_eq!(actual.location.literal, expected.location.literal, "Expected literal '{}', found '{}'", expected.location.literal, actual.location.literal);
             }
         }
     }

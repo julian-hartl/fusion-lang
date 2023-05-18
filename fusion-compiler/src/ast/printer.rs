@@ -218,6 +218,13 @@ impl ASTVisitor for ASTPrinter<'_> {
         ));
     }
 
+    fn visit_index_expression(&mut self, index_expression: &ASTIndexExpression, expr: &ASTExpression) {
+        self.visit_expression(&index_expression.target);
+        self.add_text("[");
+        self.visit_expression(&index_expression.index);
+        self.add_text("]");
+    }
+
     fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression) {
         self.add_text(&struct_init_expression.identifier.to_string());
         self.add_text("{");

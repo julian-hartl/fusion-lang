@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -165,7 +165,6 @@ impl GlobalScope {
     }
 
     fn create_external_modules(&mut self) {
-
         let external_modules_path = Self::get_external_modules_path();
         let external_modules = std::fs::read_dir(external_modules_path);
         match external_modules {
@@ -185,8 +184,6 @@ impl GlobalScope {
                 println!("Warning: Could not find external modules directory.");
             }
         }
-
-
     }
 
     pub fn get_external_modules_path() -> PathBuf {
@@ -238,8 +235,12 @@ impl GlobalScope {
     }
 
     fn current_qualified_name(&self) -> String {
-        let mut qualified_name = String::new();
         let mut module_id = self.current_module;
+        self.get_qualified_name_for_module(module_id)
+    }
+
+    pub(crate) fn get_qualified_name_for_module(&self, mut module_id: ModuleId) -> String {
+        let mut qualified_name = String::new();
         loop {
             if module_id == self.root_module {
                 qualified_name.insert_str(0, "root");
@@ -247,9 +248,15 @@ impl GlobalScope {
             }
             let module = self.modules.get(&module_id).unwrap();
             qualified_name.insert_str(0, &module.name);
-            qualified_name.insert_str(0, "::");
-            let parent = self.get_module(&module_id).parent.unwrap();
-            module_id = parent;
+            let parent = self.get_module(&module_id).parent;
+            match parent {
+                Some(parent) => {
+                    qualified_name.insert_str(0, "::");
+
+                    module_id = parent;
+                }
+                None => break,
+            }
         }
         qualified_name
     }

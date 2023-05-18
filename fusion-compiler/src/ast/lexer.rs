@@ -53,6 +53,8 @@ pub enum TokenKind {
     Dot,
     SemiColon,
     ColonColon,
+    OpenBracket,
+    CloseBracket,
     // Other
     Bad,
     Whitespace,
@@ -112,6 +114,8 @@ impl Display for TokenKind {
             TokenKind::Struct => write!(f, "Struct"),
             TokenKind::ColonColon => write!(f, "ColonColon"),
             TokenKind::Mod => write!(f, "Mod"),
+            TokenKind::OpenBracket => write!(f, "OpenBracket"),
+            TokenKind::CloseBracket => write!(f, "CloseBracket"),
         }
     }
 }
@@ -245,7 +249,12 @@ impl<'a> Lexer<'a> {
             ';' => {
                 TokenKind::SemiColon
             }
-
+            '[' => {
+                TokenKind::OpenBracket
+            }
+            ']' => {
+                TokenKind::CloseBracket
+            }
             _ => TokenKind::Bad,
         }
     }

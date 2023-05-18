@@ -496,12 +496,22 @@ impl<'a> Parser<'a> {
                 TokenKind::Arrow => {
                     expr = self.parse_member_access_expression(expr);
                 }
+                TokenKind::OpenBracket => {
+                    expr = self.parse_index_expression(expr);
+                }
                 _ => {
                     return expr;
                 }
             }
         }
         return expr;
+    }
+    
+    fn parse_index_expression(&mut self, expr: ASTExpression) -> ASTExpression {
+        let open_bracket = self.consume_and_check(TokenKind::OpenBracket).clone();
+        let index = self.parse_expression();
+        let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
+        self.ast.index_expression(expr, open_bracket, index, close_bracket)
     }
 
     fn parse_qualified_identifier(&mut self, token: Token) -> QualifiedIdentifier {

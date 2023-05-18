@@ -1,7 +1,7 @@
 use std::fmt::format;
 use std::ops::Not;
 
-use crate::hir::{HIR, HIRAssignmentExpression, HIRAssignmentTargetKind, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStructInitExpression, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
+use crate::hir::{HIR, HIRAssignmentExpression, HIRAssignmentTargetKind, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRIndexExpression, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStructInitExpression, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
 use crate::hir::visitor::HIRVisitor;
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
 
@@ -330,5 +330,12 @@ impl HIRVisitor for HIRVisualizer<'_> {
             }
         }
         self.write("}");
+    }
+
+    fn visit_index_expr(&mut self, expr: &HIRIndexExpression) {
+        self.visit_expr(&expr.target);
+        self.write("[");
+        self.visit_expr(&expr.index);
+        self.write("]");
     }
 }

@@ -21,7 +21,7 @@ use crate::text;
 use crate::text::SourceText;
 
 pub struct SourceTree {
-    pub asts: HashMap<ModuleId, Ast>,
+    pub asts: HashMap<ModuleId, (Ast, SourceText)>,
     diagnostics_bag: DiagnosticsBagCell,
     global_scope: GlobalScopeCell,
 }
@@ -38,7 +38,9 @@ impl SourceTree {
         }
     }
 
-    fn parse_ast(&mut self, path: &Path, id: ModuleId) -> Result<SourceText, std::io::Error> {
+    fn parse_ast(&mut self, path: &Path, id: ModuleId) -> Result<(), std::io::Error> {
+        self.global_scope.borrow_mut().set_current_module(id);
+        self.diagnostics_bag.borrow_mut().set_current_module(id);
         let text = std::fs::read_to_string(path)?;
         let source_text = SourceText::new(text);
         let mut lexer = Lexer::new(&source_text);
@@ -53,13 +55,12 @@ impl SourceTree {
             &mut root_ast,
         );
         parser.parse();
-        Self::print_diagnostics(&source_text, &self.diagnostics_bag);
         let module_decls = parser.get_encountered_module_declarations().clone();
         drop(parser);
 
-        self.asts.insert(id, root_ast);
+        self.asts.insert(id, (root_ast, source_text));
         for mod_id in module_decls {
-            self.global_scope.borrow_mut().set_current_module(id);
+
             let mod_name = &mod_id.span.literal;
             let mut mod_path = path.parent().unwrap().join(mod_name);
             if mod_path.is_dir() {
@@ -85,12 +86,27 @@ impl SourceTree {
                 }
             }
         }
-        Ok(source_text)
+        Ok(())
     }
 
-    pub fn print_diagnostics(source_text: &SourceText, diagnostics_bag: &DiagnosticsBagCell) {
-        let diagnostics_bag = diagnostics_bag.borrow();
-        let printer = DiagnosticsPrinter::new(source_text, &diagnostics_bag.diagnostics);
+    pub fn check_diagnostics(
+        &self,
+    ) -> Result<(), ()> {
+        let diagnostics_bag = self.diagnostics_bag.borrow();
+        if diagnostics_bag.diagnostics.len() > 0 {
+            self.print_diagnostics();
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn print_diagnostics(&self) {
+        let diagnostics_bag = self.diagnostics_bag.borrow();
+        let source_texts: HashMap<ModuleId, &SourceText> = self.asts.iter().map(|(id, (ast, source_text))| {
+            (*id, source_text)
+        }).collect();
+        let printer = DiagnosticsPrinter::new(source_texts, &diagnostics_bag.diagnostics,self.global_scope.clone());
         printer.print();
     }
 }
@@ -104,12 +120,12 @@ pub struct CompilationUnit {
 }
 
 impl CompilationUnit {
-    pub fn compile(input_file: &Path) -> Result<CompilationUnit, DiagnosticsBagCell> {
+    pub fn compile(input_file: &Path) -> Result<CompilationUnit, ()> {
         let scope: Rc<RefCell<GlobalScope>> = Rc::new(RefCell::new(GlobalScope::new()));
-        let diagnostics_bag: DiagnosticsBagCell = Rc::new(RefCell::new(DiagnosticsBag::new()));
-        let mut source_tree = SourceTree::new(diagnostics_bag.clone(), scope.clone());
         let scope_ref = scope.borrow();
         let root_module_id = scope_ref.root_module;
+        let diagnostics_bag: DiagnosticsBagCell = Rc::new(RefCell::new(DiagnosticsBag::new(root_module_id)));
+        let mut source_tree = SourceTree::new(diagnostics_bag.clone(), scope.clone());
         let modules = scope_ref.external_modules.clone();
         drop(scope_ref);
         for external_module in modules {
@@ -119,18 +135,12 @@ impl CompilationUnit {
             drop(scope_ref);
             source_tree.parse_ast(&path, external_module).expect("Could not find external module");
         }
-        let source_text = source_tree.parse_ast(input_file, root_module_id).expect("Could not find root module");
-        // let scope_ref = scope.borrow();
-        // source_tree
-        // drop(scope_ref);
-        Self::check_diagnostics(&source_text, &diagnostics_bag)?;
+        source_tree.parse_ast(input_file, root_module_id).expect("Could not find root module");
+        source_tree.check_diagnostics()?;
         let hir_gen = HIRGen::new(Rc::clone(&diagnostics_bag), scope.clone());
         let hir = hir_gen.gen(&source_tree);
         hir.visualize(scope.clone());
-        Self::check_diagnostics(&source_text, &diagnostics_bag).map_err(|_| Rc::clone(&diagnostics_bag))?;
-        // if let Some(path) = &source_text.path {
-        //     Self::format(&ast, &Path::new(path.as_str())).expect("Failed to format AST");
-        // }
+        source_tree.check_diagnostics()?;
         let mir_gen = MIRGen::new(
             Rc::clone(&diagnostics_bag),
             scope.clone(),
@@ -144,7 +154,7 @@ impl CompilationUnit {
             &scope.borrow(),
             "mir.txt",
         );
-        Self::check_diagnostics(&source_text, &diagnostics_bag)?;
+        source_tree.check_diagnostics()?;
         Ok(CompilationUnit {
             source_tree,
             diagnostics_bag,
@@ -155,20 +165,6 @@ impl CompilationUnit {
     }
 
 
-    pub fn check_diagnostics(text: &text::SourceText, diagnostics_bag: &DiagnosticsBagCell) -> Result<(), DiagnosticsBagCell> {
-        let diagnostics_binding = diagnostics_bag.borrow();
-        if diagnostics_binding.diagnostics.len() > 0 {
-            let diagnostics_printer = DiagnosticsPrinter::new(
-                &text,
-                &diagnostics_binding.diagnostics,
-            );
-            diagnostics_printer.print();
-            if diagnostics_binding.has_errors() {
-                return Err(Rc::clone(diagnostics_bag));
-            }
-        }
-        Ok(())
-    }
 
     pub fn format(ast: &Ast, save_to: &Path) -> Result<(), std::io::Error> {
         let formatter = Formatter::new(&ast);

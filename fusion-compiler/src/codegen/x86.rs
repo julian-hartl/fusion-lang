@@ -439,7 +439,42 @@ impl<'a> X86Codegen<'a> {
             InstructionKind::Move { from, to } => {
                 self.copy_value(from, to);
             }
+            InstructionKind::Index { base, index, result_place: place } => {
+                self.gen_local_mem_op(place);
+                self.gen_index(base, index, place);
+            }
         }
+    }
+
+    fn gen_index(&mut self, base: &Place, index: &Place, place: &LocalPlace) {
+        let base_mem_op = self.gen_mem_op(&base);
+        let index_mem_op = self.gen_mem_op(&index);
+        let place_mem_op = self.gen_local_mem_op(&place);
+        self.push_instruction(X86Instruction::Mov(
+            X86Operand::Register(X86Register::RAX),
+            base_mem_op,
+        ));
+        self.push_instruction(X86Instruction::Mov(
+            X86Operand::Register(X86Register::RDX),
+            index_mem_op,
+        ));
+        self.push_instruction(X86Instruction::Add(
+            X86Operand::Register(X86Register::RAX),
+            X86Operand::Register(X86Register::RDX),
+        ));
+        self.push_instruction(X86Instruction::Mov(
+            X86Operand::Register(X86Register::RAX),
+            X86Operand::Memory {
+                base: X86Register::RAX,
+                offset: 0,
+                size: None,
+            },
+        ));
+        let register = self.get_matching_register(&place_mem_op);
+        self.push_instruction(X86Instruction::Mov(
+            place_mem_op,
+            X86Operand::Register(register),
+        ));
     }
 
     fn deref_value(&mut self, from: &Place, to: &LocalPlace) {
@@ -646,7 +681,7 @@ impl<'a> X86Codegen<'a> {
         let rhs_op = self.gen_value_op(rhs);
         let store_at_op = self.gen_local_mem_op(store_at);
         self.push_instruction(X86Instruction::Mov(
-            X86Operand::Register(X86Register::RAX),
+            X86Operand::Register(self.get_matching_register(&lhs_op)),
             lhs_op,
         ));
         self.push_instruction(X86Instruction::Cmp(
@@ -682,6 +717,27 @@ impl<'a> X86Codegen<'a> {
             store_at_op,
             X86Operand::Register(X86Register::AL),
         ));
+    }
+
+    fn get_matching_register(&self, op: &X86Operand) -> X86Register {
+        match op {
+            X86Operand::Memory { size, .. } => {
+                match size {
+                    None => {
+                        X86Register::RAX
+                    }
+                    Some(size) => {
+                        match size {
+                            X86Size::Byte => X86Register::AL,
+                            X86Size::Word => X86Register::AX,
+                            X86Size::DWord => X86Register::EAX,
+                            X86Size::QWord => X86Register::RAX,
+                        }
+                    }
+                }
+            }
+            _ => unimplemented!("Operand {:?} not implemented", op),
+        }
     }
 
     fn gen_arithmetic_op(&mut self, op: &HIRBinaryOperator, lhs_op: X86Operand, rhs_op: X86Operand, store_at_op: X86Operand) {

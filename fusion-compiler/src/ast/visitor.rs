@@ -1,6 +1,6 @@
 use termion::color::{Fg, Reset};
 
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTWhileStatement};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTIndexExpression, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTWhileStatement};
 use crate::ast::printer::ASTPrinter;
 use crate::text::span::TextSpan;
 
@@ -124,8 +124,13 @@ pub trait ASTVisitor {
             ASTExpressionKind::StructInit(expr) => {
                 self.visit_struct_init_expression(expr, &expression);
             }
+            ASTExpressionKind::Index(expr) => {
+                self.visit_index_expression(expr, &expression);
+            }
         }
     }
+
+    fn visit_index_expression(&mut self, index_expression: &ASTIndexExpression, expr: &ASTExpression);
 
     fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression);
 

@@ -133,6 +133,10 @@ impl Ast {
         ASTExpression::new(ASTExpressionKind::StructInit(ASTStructInitExpression { identifier, open_brace, fields, close_brace }))
     }
 
+    pub fn index_expression(&mut self, expression: ASTExpression, open_bracket: Token, index: ASTExpression, close_bracket: Token) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Index(ASTIndexExpression { target: Box::new(expression), open_bracket, index: Box::new(index), close_bracket }))
+    }
+
     pub fn error_expression(&mut self, span: TextSpan) -> ASTExpression {
         ASTExpression::new(ASTExpressionKind::Error(span))
     }
@@ -531,9 +535,20 @@ pub enum ASTExpressionKind {
     StructInit(
         ASTStructInitExpression
     ),
+    Index(
+        ASTIndexExpression
+    ),
     Error(
         TextSpan
     ),
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTIndexExpression {
+    pub target: Box<ASTExpression>,
+    pub open_bracket: Token,
+    pub index: Box<ASTExpression>,
+    pub close_bracket: Token,
 }
 
 #[derive(Debug, Clone)]
@@ -950,6 +965,13 @@ impl ASTExpression {
                     spans.push(span);
                 }
                 TextSpan::merge(spans)
+            }
+            ASTExpressionKind::Index(expr) => {
+                let span1 = expr.target.span();
+                let span2 = &expr.open_bracket.span;
+                let span3 = &expr.index.span();
+                let span4 = &expr.close_bracket.span;
+                TextSpan::merge(vec![&span1, &span2, &span3, &span4])
             }
         }
     }
