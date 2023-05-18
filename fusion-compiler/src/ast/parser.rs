@@ -294,7 +294,8 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        let type_name = self.consume_and_check(TokenKind::Identifier).clone();
+        let starting_id = self.consume_and_check(TokenKind::Identifier).clone();
+        let type_name = self.parse_qualified_identifier(starting_id);
         TypeSyntax::new(type_name, ptr.map(|(asterisk, mut_)| PtrSyntax {
             mut_token: mut_,
             star: asterisk,
@@ -459,8 +460,7 @@ impl<'a> Parser<'a> {
                 self.ast.parenthesized_expression(left_paren, expr, right_paren)
             }
             TokenKind::Identifier => {
-                let identifiers = self.parse_identifier_chain(token);
-                let qualified = QualifiedIdentifier::new(identifiers);
+                let qualified = self.parse_qualified_identifier(token);
                 self.consume_whitespace();
                 if self.current().kind == TokenKind::OpenBrace && !self.is_parsing_condition {
                     self.parse_struct_init_expression(qualified)
@@ -501,6 +501,12 @@ impl<'a> Parser<'a> {
             }
         }
         return expr;
+    }
+
+    fn parse_qualified_identifier(&mut self, token: Token) -> QualifiedIdentifier {
+        let identifiers = self.parse_identifier_chain(token);
+        let qualified = QualifiedIdentifier::new(identifiers);
+        qualified
     }
 
     fn parse_identifier_chain(&mut self, identifier: Token) -> Vec<Token> {

@@ -5,12 +5,12 @@ use std::rc::Rc;
 
 use fusion_compiler::{id, id_generator, Result};
 
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, TypeSyntax};
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, QualifiedIdentifier, TypeSyntax};
 use crate::ast::lexer::{Token, TokenKind};
 use crate::ast::visitor::ASTVisitor;
 use crate::compilation::SourceTree;
 use crate::diagnostics::DiagnosticsBagCell;
-use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
+use crate::modules::scopes::{GlobalScope, GlobalScopeCell, SymbolLookupResult};
 use crate::modules::symbols::{Function, ModuleId};
 use crate::text::span::TextSpan;
 use crate::typings::{Layout, Type};
@@ -547,7 +547,7 @@ mod common {
                 FuncDeclParameter::Normal(param) => {
                     let name = param.identifier.span.literal.clone();
                     let ty = hir_gen.resolve_type_syntax(&param.type_annotation.ty);
-                    hir_gen.scope.borrow_mut().declare_variable(name.clone(), ty,param.mut_token.is_some())
+                    hir_gen.scope.borrow_mut().declare_variable(name.clone(), ty, param.mut_token.is_some())
                 }
                 FuncDeclParameter::Self_(self_param) => {
                     diagnostics_bag.borrow_mut().report_self_outside_class(&self_param.span);
@@ -1025,49 +1025,79 @@ impl HIRGen {
                 (expr, ty)
             }
             ASTExpressionKind::StructInit(expr) => {
-                let identifier = expr.identifier.get_qualified_name();
-                let struct_id = self.scope.borrow_mut().lookup_struct_qualified(&identifier);
-                let (struct_id, fields) = match struct_id {
-                    None => {
-                        self.diagnostics_bag.borrow_mut().report_undeclared_struct(&expr.identifier.span(), &identifier);
-                        (StructId::new(0), vec![])
-                    }
-                    Some(struct_id) => {
-                        let mut fields = Vec::new();
-                        for field in &expr.fields {
-                            let scope = self.scope.borrow();
-                            let field_id = scope.lookup_field(&struct_id, &field.identifier.span.literal);
-                            if let Some(field_id) = field_id {
-                                drop(scope);
-                                let value = self.gen_expression(&field.initializer);
-                                let scope = self.scope.borrow();
-                                let struct_field = scope.get_field(&field_id);
-                                self.ensure_type_match(&value.span, &value.ty, &struct_field.ty);
-                                fields.push(HIRStructInitField {
-                                    field_id,
-                                    value,
-                                });
-                            } else {
-                                let struct_ = scope.get_struct(&struct_id);
+                let lookup_result = self.map_lookup_result(&expr.identifier, self.scope.borrow_mut().lookup_struct_qualified(&expr.identifier));
+                let expr  =match lookup_result {
+                    Ok(struct_id) => {
+                        match struct_id {
+                            None => {
+                                let span = &expr.identifier.get_unqualified_name().span;
+                                self.diagnostics_bag.borrow_mut().report_undeclared_struct(&span, &span.literal);
+                                None
+                            }
+                            Some(struct_id) => {
+                                let mut fields = Vec::new();
+                                for field in &expr.fields {
+                                    let scope = self.scope.borrow();
+                                    let field_id = scope.lookup_field(&struct_id, &field.identifier.span.literal);
+                                    if let Some(field_id) = field_id {
+                                        drop(scope);
+                                        let value = self.gen_expression(&field.initializer);
+                                        let scope = self.scope.borrow();
+                                        let struct_field = scope.get_field(&field_id);
+                                        self.ensure_type_match(&value.span, &value.ty, &struct_field.ty);
+                                        fields.push(HIRStructInitField {
+                                            field_id,
+                                            value,
+                                        });
+                                    } else {
+                                        let struct_ = scope.get_struct(&struct_id);
 
-                                self.diagnostics_bag.borrow_mut().report_struct_has_no_member(&field.identifier.span, struct_.name.unqualified_name());
+                                        self.diagnostics_bag.borrow_mut().report_struct_has_no_member(&field.identifier.span, struct_.name.unqualified_name());
+                                    }
+                                }
+                                let expr = HIRExpressionKind::StructInit(HIRStructInitExpression {
+                                    struct_id,
+                                    fields,
+                                });
+                                Some((expr, Type::Struct(struct_id)))
                             }
                         }
-                        (struct_id, fields)
                     }
+                    Err(_) => {None}
                 };
+                match expr {
+                    None => {
+                        (HIRExpressionKind::Void, Type::Error)
+                    }
+                    Some(expr) => {
+                        expr
+                    }
+                }
 
-                let expr = HIRExpressionKind::StructInit(HIRStructInitExpression {
-                    struct_id,
-                    fields,
-                });
-                (expr, Type::Struct(struct_id))
+
             }
         };
         HIRExpression {
             kind,
             ty,
             span: expr.span(),
+        }
+    }
+
+    fn map_lookup_result<T>(&self, qualified_identifier: &QualifiedIdentifier, result: SymbolLookupResult<T>) -> std::result::Result<Option<T>, ()> {
+        match result {
+            SymbolLookupResult::ModuleNotFound { index } => {
+                let not_found_module = &qualified_identifier.parts[index];
+                self.diagnostics_bag.borrow_mut().report_module_not_found(&not_found_module.span);
+                Err(())
+            }
+
+            SymbolLookupResult::SymbolNotFound => {
+                Ok(None)
+            }
+            SymbolLookupResult::Found(symbol) => {
+                Ok(Some(symbol))
+            }
         }
     }
 
@@ -1127,15 +1157,24 @@ impl HIRGen {
     fn resolve_callee(&mut self, callee: &ASTExpression) -> HIRCallee {
         match &callee.kind {
             ASTExpressionKind::Identifier(expr) => {
-                let identifier = expr.identifier.get_unqualified_name();
-                let function_id = self.scope.borrow_mut().lookup_function_unqualified(&identifier.span.literal);
+                let lookup_result = self.scope.borrow_mut().lookup_function_qualified(&expr.identifier);
+                let function_id = self.map_lookup_result(&expr.identifier, lookup_result);
                 match function_id {
-                    Some(function_id) => {
-                        HIRCallee::Function(function_id)
+                    Ok(function_id) => {
+                        match function_id {
+                            Some(function_id) => {
+                                HIRCallee::Function(function_id)
+                            }
+                            None => {
+                                let identifier = expr.identifier.get_unqualified_name();
+                                self.diagnostics_bag.borrow_mut().report_undeclared_function(&identifier);
+                                HIRCallee::Undeclared(identifier.span.literal.clone())
+                            }
+                        }
                     }
-                    None => {
-                        self.diagnostics_bag.borrow_mut().report_undeclared_function(&identifier);
-                        HIRCallee::Undeclared(identifier.span.literal.clone())
+                    Err(_) => {
+                        // todo: we should not report errors anymore when doing this
+                        HIRCallee::Invalid(Box::new(self.gen_expression(callee)))
                     }
                 }
             }
@@ -1148,15 +1187,31 @@ impl HIRGen {
     }
 
     fn resolve_type_syntax(&mut self, ty_syntax: &TypeSyntax) -> Type {
-        if let Some(ty) = self.scope.borrow_mut().resolve_type_from_identifier(&ty_syntax.name) {
+        if let Some(ty) = self.resolve_type_from_identifier(&ty_syntax.name) {
             return if let Some(ptr) = &ty_syntax.ptr {
                 Type::Ptr(Box::new(ty), ptr.mut_token.is_some())
             } else {
                 ty
             };
         }
-        self.diagnostics_bag.borrow_mut().report_undeclared_type(&ty_syntax.name);
+        self.diagnostics_bag.borrow_mut().report_undeclared_type(ty_syntax.name.get_unqualified_name());
         Type::Error
+    }
+
+    pub fn resolve_type_from_identifier(
+        &self,
+        identifier: &QualifiedIdentifier,
+    ) -> Option<Type> {
+        if identifier.parts.len() == 1 {
+            if let Some(ty) = Type::get_builtin_type(identifier.parts[0].span.literal.as_str()) {
+                return Some(ty);
+            }
+        }
+        let result: Option<StructId> = self.map_lookup_result(identifier, self.scope.borrow().lookup_struct_qualified(identifier)).ok().flatten();
+        if let Some(id) = result {
+            return Some(Type::Struct(id));
+        }
+        None
     }
 
     fn ensure_type_match<'a>(&self, actual_span: &TextSpan, actual: &'a Type, expected: &'a Type) -> &'a Type {

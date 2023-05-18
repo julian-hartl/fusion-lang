@@ -220,6 +220,9 @@ impl DiagnosticsBag {
     pub fn report_module_already_declared(&mut self, span: &TextSpan) {
         self.report_error(format!("Module '{}' already declared", span.literal), span.clone());
     }
+    pub fn report_module_not_found(&mut self, span: &TextSpan) {
+        self.report_error(format!("Module '{}' not found", span.literal), span.clone());
+    }
 }
 
 #[cfg(test)]

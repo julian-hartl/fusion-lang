@@ -23,8 +23,7 @@ pub struct Body {
     label_gen: Rc<RefCell<LabelGenerator>>,
 }
 
-// provide command line interface to compile and link program (link with std by default)
-// add modules
+// todo: add support for external packages (std)
 
 impl Body {
     pub fn new(

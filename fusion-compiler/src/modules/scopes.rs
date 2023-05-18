@@ -4,6 +4,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use crate::ast::lexer::Token;
+use crate::ast::QualifiedIdentifier;
 use crate::hir::{FieldId, FieldIdGenerator, FunctionId, FunctionIdGenerator, StructId, StructIdGenerator, VariableId, VariableIdGenerator};
 use crate::modules::symbols::{Function, FunctionModifier, ModuleId, ModuleIdGenerator, QualifiedName, Struct, StructField, Variable};
 use crate::typings::Type;
@@ -36,12 +37,10 @@ pub struct Module {
 
 impl Module {
     pub fn has_direct_submodule(&self, name: &str, modules: &HashMap<ModuleId, Module>) -> bool {
-
         self.submodules.iter().any(|id| {
             let module = modules.get(id).unwrap();
             module.name == *name
         })
-
     }
 
     pub fn find_submodule(&self, name: &str, modules: &HashMap<ModuleId, Module>) -> Option<ModuleId> {
@@ -77,6 +76,23 @@ impl Module {
     }
 }
 
+pub enum SymbolLookupResult<T> {
+    ModuleNotFound {
+        index: usize,
+    },
+    SymbolNotFound,
+    Found(T),
+}
+
+impl<T> From<Option<T>> for SymbolLookupResult<T> {
+    fn from(option: Option<T>) -> Self {
+        match option {
+            Some(value) => SymbolLookupResult::Found(value),
+            None => SymbolLookupResult::SymbolNotFound,
+        }
+    }
+}
+
 pub struct GlobalScope {
     pub root_module: ModuleId,
     modules: HashMap<ModuleId, Module>,
@@ -93,8 +109,7 @@ pub struct GlobalScope {
 }
 
 impl GlobalScope {
-    pub fn new(
-    ) -> Self {
+    pub fn new() -> Self {
         let mut modules = HashMap::new();
         let mut generator = ModuleIdGenerator::new();
         let root_module = Self::create_root_module(
@@ -224,7 +239,6 @@ impl GlobalScope {
         Ok(())
     }
 
-    // todo: take in qualified name and traverse modules if necessary
     pub fn lookup_struct_unqualified(&self, name: &str) -> Option<StructId> {
         self.lookup_struct_in_module(name, &self.current_module)
     }
@@ -239,21 +253,35 @@ impl GlobalScope {
             }).map(|struct_id| *struct_id)
     }
 
-    pub fn lookup_struct_qualified(&self, name: &str) -> Option<StructId> {
-        let mut name_parts: Vec<&str> = name.split("::").collect();
-        if name_parts.len() == 1 {
-            return self.lookup_struct_unqualified(name);
-        }
+    pub fn lookup_struct_qualified(&self, name: &QualifiedIdentifier) -> SymbolLookupResult<StructId> {
+        let (unqualified_name, effective_module_id) = match self.do_qualified_lookup(name) {
+            Ok(value) => value,
+            Err(value) => return value,
+        };
+
+        self.lookup_struct_in_module(unqualified_name, &effective_module_id).into()
+    }
+
+    fn do_qualified_lookup<'a, SymbolId>(&self, name: &'a QualifiedIdentifier) -> Result<(&'a str, ModuleId), SymbolLookupResult<SymbolId>> {
+        let mut name_parts: Vec<&str> = name.parts.iter().map(|part| part.span.literal.as_str()).collect();
         let mut effective_module_id = self.current_module;
         while name_parts.len() > 1 {
             let module_name = name_parts[0];
             let effective_module = self.get_module(&effective_module_id);
-            let module = effective_module.find_submodule(module_name, &self.modules)?;
-            effective_module_id = module;
-            name_parts.remove(0);
+            let module = effective_module.find_submodule(module_name, &self.modules);
+            match module {
+                None => {
+                    return Err(SymbolLookupResult::ModuleNotFound {
+                        index: name.parts.len() - name_parts.len(),
+                    });
+                }
+                Some(module) => {
+                    effective_module_id = module;
+                    name_parts.remove(0);
+                }
+            }
         }
-
-        self.lookup_struct_in_module(name_parts[0], &effective_module_id)
+        Ok((name_parts[0], effective_module_id))
     }
 
     pub fn lookup_field(&self, struct_id: &StructId, name: &str) -> Option<FieldId> {
@@ -320,6 +348,25 @@ impl GlobalScope {
             .map(|(id, _)| id.clone())
     }
 
+    pub fn lookup_function_qualified(&self, name: &QualifiedIdentifier) -> SymbolLookupResult<FunctionId> {
+        let (unqualified_name, effective_module_id) = match self.do_qualified_lookup(name) {
+            Ok(value) => value,
+            Err(value) => return value,
+        };
+
+        self.lookup_function_in_module(unqualified_name, &effective_module_id).into()
+    }
+
+    fn lookup_function_in_module(&self, name: &str, module_id: &ModuleId) -> Option<FunctionId> {
+        let module = self.get_module(module_id);
+        module.functions
+            .iter()
+            .find(|function_id| {
+                let function = self.get_function(function_id);
+                function.name.unqualified_name() == name
+            }).map(|function_id| *function_id)
+    }
+
     pub fn declare_variable(
         &mut self,
         name: String,
@@ -360,19 +407,7 @@ impl GlobalScope {
         self.variables.get(&id).unwrap()
     }
 
-    pub fn resolve_type_from_identifier(
-        &self,
-        token: &Token,
-    ) -> Option<Type> {
-        let name = &token.span.literal;
-        if let Some(ty) = Type::get_builtin_type(name) {
-            return Some(ty);
-        }
-        if let Some(id) = self.lookup_struct_qualified(name) {
-            return Some(Type::Struct(id));
-        }
-        None
-    }
+
 
     pub fn enter_local_scope(&mut self) {
         self.current_module_mut().local_scopes.push(LocalScope::new());

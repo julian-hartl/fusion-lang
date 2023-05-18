@@ -1,2 +1,5 @@
 struct Test {
 }
+
+func test() {
+}

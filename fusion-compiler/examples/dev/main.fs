@@ -4,8 +4,8 @@ mod baz
 func main -> i64 {
 
     let foo = foo::foo()
-    let baz = baz::baz()
+    let test = baz::test::test()
 
-    return baz.baz
+    return 0
 
 }

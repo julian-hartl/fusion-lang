@@ -202,7 +202,7 @@ pub struct StaticTypeAnnotation {
 
 #[derive(Debug, Clone)]
 pub struct TypeSyntax {
-    pub name: Token,
+    pub name: QualifiedIdentifier,
     pub ptr: Option<PtrSyntax>,
 }
 
@@ -213,14 +213,13 @@ pub struct PtrSyntax {
 }
 
 impl TypeSyntax {
-    pub fn new(name: Token, ptr: Option<PtrSyntax>) -> Self {
+    pub fn new(name: QualifiedIdentifier, ptr: Option<PtrSyntax>) -> Self {
         Self { name, ptr }
     }
 
     pub fn span(&self) -> TextSpan {
-        let mut spans = vec![
-            &self.name.span,
-        ];
+        let id_span = self.name.span();
+        let mut spans = vec![&id_span];
         if let Some(ptr) = &self.ptr {
             spans.push(&ptr.star.span);
             if let Some(mut_token) = &ptr.mut_token {
@@ -237,12 +236,12 @@ impl Display for TypeSyntax {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if let Some(ptr) = &self.ptr {
             if ptr.mut_token.is_some() {
-                write!(f, "*mut {}", self.name.span.literal)
+                write!(f, "*mut {}", self.name.get_qualified_name())
             } else {
-                write!(f, "*{}", self.name.span.literal)
+                write!(f, "*{}", self.name.get_qualified_name())
             }
         } else {
-            write!(f, "{}", self.name.span.literal)
+            write!(f, "{}", self.name.get_qualified_name())
         }
     }
 }
@@ -368,7 +367,8 @@ impl ASTStatement {
                 ];
                 if let Some(type_annotation) = &stmt.type_annotation {
                     spans.push(&type_annotation.colon.span);
-                    spans.push(&type_annotation.ty.name.span);
+                    // let id_span = type_annotation.ty.name.span();
+                    // spans.push(&id_span);
                 }
                 TextSpan::merge(
                     spans
@@ -425,7 +425,8 @@ impl ASTStatement {
                         FuncDeclParameter::Normal(parameter) => {
                             spans.push(&parameter.identifier.span);
                             spans.push(&parameter.type_annotation.colon.span);
-                            spans.push(&parameter.type_annotation.ty.name.span);
+                            // let id_span = parameter.type_annotation.ty.name.span();
+                            // spans.push(&id_span);
                         }
                         FuncDeclParameter::Self_(token) => {
                             spans.push(&token.span);
@@ -434,7 +435,7 @@ impl ASTStatement {
                 }
                 if let Some(return_type) = &stmt.return_type {
                     spans.push(&return_type.arrow.span);
-                    spans.push(&return_type.ty.name.span);
+                    // spans.push(&return_type.ty.name.span());
                 }
                 let body_spans = stmt.body.as_ref().map(|body| {
                     body.iter().map(|stmt| stmt.span()).collect::<Vec<_>>()
