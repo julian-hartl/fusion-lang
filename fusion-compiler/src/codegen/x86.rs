@@ -680,12 +680,13 @@ impl<'a> X86Codegen<'a> {
         let lhs_op = self.gen_value_op(lhs);
         let rhs_op = self.gen_value_op(rhs);
         let store_at_op = self.gen_local_mem_op(store_at);
+        let source = X86Operand::Register(self.get_matching_register(&lhs_op));
         self.push_instruction(X86Instruction::Mov(
-            X86Operand::Register(self.get_matching_register(&lhs_op)),
+            source.clone(),
             lhs_op,
         ));
         self.push_instruction(X86Instruction::Cmp(
-            X86Operand::Register(X86Register::RAX),
+            source,
             rhs_op,
         ));
         let comp_instruction =
