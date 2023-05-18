@@ -463,7 +463,7 @@ impl<'a> X86Codegen<'a> {
             X86Operand::Register(X86Register::RDX),
         ));
         self.push_instruction(X86Instruction::Mov(
-            X86Operand::Register(X86Register::RAX),
+            X86Operand::Register(X86Register::AL),
             X86Operand::Memory {
                 base: X86Register::RAX,
                 offset: 0,
