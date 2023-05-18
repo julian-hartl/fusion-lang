@@ -1,6 +1,8 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
+
 use fusion_compiler::{id, id_generator};
+
 use crate::hir::{FieldId, FunctionId, StructId, VariableId};
 use crate::modules::scopes::GlobalScope;
 use crate::typings::{Layout, Type};
@@ -9,7 +11,6 @@ id!(ModuleId);
 id_generator!(ModuleIdGenerator, ModuleId);
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-
 pub struct QualifiedName {
     pub name: String,
     pub module: ModuleId,
@@ -24,7 +25,6 @@ impl QualifiedName {
 impl Display for QualifiedName {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)
-
     }
 }
 

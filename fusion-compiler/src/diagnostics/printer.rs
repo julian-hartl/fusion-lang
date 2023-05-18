@@ -1,7 +1,9 @@
 use std::cmp;
 use std::ops::Deref;
+
 use termion::color;
 use termion::color::{Color, Fg, Red, Reset, Yellow};
+
 use crate::diagnostics::Diagnostic;
 use crate::text::SourceText;
 
@@ -12,7 +14,7 @@ pub struct DiagnosticsPrinter<'a> {
 
 const PREFIX_LENGTH: usize = 8;
 
-impl <'a> DiagnosticsPrinter<'a> {
+impl<'a> DiagnosticsPrinter<'a> {
     pub fn new(text: &'a SourceText, diagnostics: &'a [Diagnostic]) -> Self {
         Self {
             text,
@@ -61,8 +63,6 @@ impl <'a> DiagnosticsPrinter<'a> {
 
 
             result.push_str(&format!("{}{}{}{}{}\n", prefix, Fg(color.deref()), span, Fg(Reset), suffix));
-
-
         }
 
         let mut last_indent = 0;
@@ -84,7 +84,7 @@ impl <'a> DiagnosticsPrinter<'a> {
                 let line = self.text.get_line(line_index);
                 line.len()
             };
-            last_indent =  start_column;
+            last_indent = start_column;
             let arrow_pointers = Self::format_arrows(start_column, end_column);
             result.push_str(&format!("{}\n", arrow_pointers));
         }
@@ -97,7 +97,7 @@ impl <'a> DiagnosticsPrinter<'a> {
         result
     }
 
-    fn format_arrows(start_column: usize, end_column: usize) ->  String {
+    fn format_arrows(start_column: usize, end_column: usize) -> String {
         let arrow_pointers = format!("{:indent$}{}", "", std::iter::repeat('^').take(end_column - start_column).collect::<String>(), indent = start_column);
         arrow_pointers
     }
@@ -107,12 +107,9 @@ impl <'a> DiagnosticsPrinter<'a> {
     }
 
 
-
     fn format_error_message(diagnostic: &Diagnostic, indent: usize, column: usize, line_index: usize) -> String {
         format!("{:indent$}+-- {} ({}:{})", "", diagnostic.message, column + 1, line_index + 1, indent = indent)
     }
-
-
 
 
     fn get_text_spans(&'a self, diagnostic: &Diagnostic, line: &'a str, column: usize) -> (&'a str, &'a str, &'a str) {

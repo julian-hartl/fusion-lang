@@ -1,10 +1,11 @@
-use clap::Parser;
 use std::fs::File;
 use std::io::{Error, ErrorKind, Write};
 use std::path::{Path, PathBuf};
+
+use clap::Parser;
+
 use crate::compilation::CompilationUnit;
 use crate::text;
-
 
 #[derive(Parser)]
 #[clap(version = "1.0", author = "Julian Hartl")]
@@ -33,7 +34,6 @@ pub struct BuildCommand {
 }
 
 impl Cli {
-
     pub fn run(&self, build: &BuildCommand) -> Result<(), Box<dyn std::error::Error>> {
         self.build(build)?;
         self.execute(build)?;
@@ -136,7 +136,7 @@ impl Cli {
 
         let x86_gen = crate::codegen::x86::X86Codegen::new(
             &compilation_unit.mir,
-            compilation_unit.scope.clone()
+            compilation_unit.scope.clone(),
         );
 
         let asm = x86_gen.gen();

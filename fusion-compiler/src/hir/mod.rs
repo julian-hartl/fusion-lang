@@ -1026,7 +1026,7 @@ impl HIRGen {
             }
             ASTExpressionKind::StructInit(expr) => {
                 let lookup_result = self.map_lookup_result(&expr.identifier, self.scope.borrow_mut().lookup_struct_qualified(&expr.identifier));
-                let expr  =match lookup_result {
+                let expr = match lookup_result {
                     Ok(struct_id) => {
                         match struct_id {
                             None => {
@@ -1063,7 +1063,7 @@ impl HIRGen {
                             }
                         }
                     }
-                    Err(_) => {None}
+                    Err(_) => { None }
                 };
                 match expr {
                     None => {
@@ -1073,8 +1073,6 @@ impl HIRGen {
                         expr
                     }
                 }
-
-
             }
         };
         HIRExpression {

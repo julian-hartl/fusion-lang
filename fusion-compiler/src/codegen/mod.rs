@@ -1,5 +1,5 @@
-use crate::modules::scopes::GlobalScope;
 use crate::mir::MIR;
+use crate::modules::scopes::GlobalScope;
 
 pub mod llvm;
 pub mod x86;

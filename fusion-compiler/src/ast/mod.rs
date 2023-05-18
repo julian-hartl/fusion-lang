@@ -70,7 +70,7 @@ impl Ast {
     }
 
     pub fn module_decl_statement(&mut self, module_token: Token, identifier: Token) -> ASTStatement {
-        ASTStatement::new(ASTStatementKind::ModDecl(ASTModDeclStatement { mod_token:module_token, identifier }))
+        ASTStatement::new(ASTStatementKind::ModDecl(ASTModDeclStatement { mod_token: module_token, identifier }))
     }
 
     pub fn number_expression(&mut self, token: Token, number: i64) -> ASTExpression {

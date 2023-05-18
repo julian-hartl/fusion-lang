@@ -79,7 +79,7 @@ impl Display for Type {
 
 impl Type {
     pub fn StringSlice(as_mut: bool) -> Self {
-        Type::Ptr(Box::new(Type::Char),as_mut)
+        Type::Ptr(Box::new(Type::Char), as_mut)
     }
 
     pub fn is_assignable_to(&self, other: &Type) -> bool {
@@ -87,7 +87,7 @@ impl Type {
             return true;
         }
         match (self, other) {
-            (Type::Ptr(ty1,is_mutable_1), Type::Ptr(ty2,is_mutable_2)) => {
+            (Type::Ptr(ty1, is_mutable_1), Type::Ptr(ty2, is_mutable_2)) => {
                 if *is_mutable_2 {
                     return *is_mutable_1;
                 }
@@ -114,7 +114,7 @@ impl Type {
 
     pub fn deref(&self) -> Option<Type> {
         match self {
-            Type::Ptr(ty,_) => Some(*ty.clone()),
+            Type::Ptr(ty, _) => Some(*ty.clone()),
             _ => None,
         }
     }
@@ -133,7 +133,7 @@ impl Type {
                 size: 0,
                 alignment: 0,
             },
-            Type::Ptr(_,_) => Layout {
+            Type::Ptr(_, _) => Layout {
                 size: Layout::POINTER_SIZE,
                 alignment: Layout::POINTER_SIZE,
             },

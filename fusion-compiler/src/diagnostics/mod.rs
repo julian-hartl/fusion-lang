@@ -248,7 +248,7 @@ mod test {
 
         fn compile(input: &str) -> Vec<Diagnostic> {
             let raw = Self::get_raw_text(input);
-            let source_text = SourceText::new(&raw,None);
+            let source_text = SourceText::new(&raw, None);
             let compilation_unit = CompilationUnit::compile(&source_text);
             match compilation_unit {
                 Ok(_) => vec![],

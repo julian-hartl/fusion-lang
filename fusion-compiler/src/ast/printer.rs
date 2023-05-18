@@ -1,4 +1,5 @@
 use std::fmt::format;
+
 use termion::color;
 
 use crate::ast::*;
@@ -10,7 +11,7 @@ pub struct ASTPrinter<'a> {
     pub ast: &'a Ast,
 }
 
-impl <'a> ASTPrinter<'a> {
+impl<'a> ASTPrinter<'a> {
     const NUMBER_COLOR: color::Cyan = color::Cyan;
     const TEXT_COLOR: color::LightWhite = color::LightWhite;
     const KEYWORD_COLOR: color::Magenta = color::Magenta;
@@ -80,7 +81,7 @@ impl <'a> ASTPrinter<'a> {
     }
 
     pub fn new(ast: &'a Ast) -> Self {
-        Self { indent: 0, result: String::new(),ast }
+        Self { indent: 0, result: String::new(), ast }
     }
 
     pub fn print(mut self) -> String {
@@ -129,7 +130,6 @@ impl ASTVisitor for ASTPrinter<'_> {
             self.add_text("(");
         } else {
             self.add_whitespace();
-
         }
         for (i, parameter) in func_decl_statement.parameters.iter().enumerate() {
             if i != 0 {
@@ -145,7 +145,6 @@ impl ASTVisitor for ASTPrinter<'_> {
                     self.add_keyword("self");
                 }
             }
-
         }
         if !are_parameters_empty {
             self.add_text(")");

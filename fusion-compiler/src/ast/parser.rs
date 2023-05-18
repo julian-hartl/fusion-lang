@@ -3,6 +3,7 @@ use std::cell::Cell;
 use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTFunctionReturnType, ASTStatement, ASTString, ASTStructField, ASTStructInitField, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, PtrSyntax, QualifiedIdentifier, StaticTypeAnnotation, StringPart, TypeSyntax};
 use crate::ast::lexer::{Lexer, Token, TokenKind};
 use crate::diagnostics::DiagnosticsBagCell;
+
 #[derive(Debug, Clone)]
 pub struct Counter {
     value: Cell<usize>,
@@ -31,7 +32,7 @@ pub struct Parser<'a> {
     diagnostics_bag: DiagnosticsBagCell,
     ast: &'a mut Ast,
     is_parsing_condition: bool,
-    encountered_module_declarations: Vec<Token>
+    encountered_module_declarations: Vec<Token>,
 }
 
 impl<'a> Parser<'a> {

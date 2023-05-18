@@ -1,10 +1,10 @@
 use termion::color::{Fg, Reset};
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTUnaryExpression, ASTIdentifierExpression, ASTWhileStatement, ASTDerefExpression, ASTRefExpression, ASTCharExpression, ASTCastExpression, ASTStructDeclStatement, ASTMemberAccessExpression, ASTStructInitExpression, ASTModDeclStatement};
-use crate::text::span::TextSpan;
+
+use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIfStatement, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTParenthesizedExpression, ASTRefExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTWhileStatement};
 use crate::ast::printer::ASTPrinter;
+use crate::text::span::TextSpan;
 
 pub trait ASTVisitor {
-
     fn get_ast(&self) -> &Ast;
 
     fn do_visit_statement(&mut self, statement: &ASTStatement) {
@@ -55,7 +55,6 @@ pub trait ASTVisitor {
     fn visit_while_statement(&mut self, while_statement: &ASTWhileStatement) {
         self.visit_expression(&while_statement.condition);
         self.visit_statement(&while_statement.body);
-
     }
     fn visit_block_statement(&mut self, block_statement: &ASTBlockStatement) {
         for statement in &block_statement.statements {

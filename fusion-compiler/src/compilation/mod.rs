@@ -53,7 +53,7 @@ impl SourceTree {
             &mut root_ast,
         );
         parser.parse();
-        Self::print_diagnostics(&source_text,&self.diagnostics_bag);
+        Self::print_diagnostics(&source_text, &self.diagnostics_bag);
         let module_decls = parser.get_encountered_module_declarations().clone();
         drop(parser);
 
@@ -65,8 +65,7 @@ impl SourceTree {
             if mod_path.is_dir() {
                 // fallback to mod.fs
                 mod_path = mod_path.join("mod.fs");
-            }
-            else {
+            } else {
                 mod_path = mod_path.with_extension("fs");
             }
             let mut scope = self.global_scope.borrow_mut();
@@ -94,7 +93,6 @@ impl SourceTree {
         let printer = DiagnosticsPrinter::new(source_text, &diagnostics_bag.diagnostics);
         printer.print();
     }
-
 }
 
 pub struct CompilationUnit {
