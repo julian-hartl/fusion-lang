@@ -1,9 +1,8 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::collections::{HashMap};
+use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::ast::lexer::Token;
 use crate::ast::QualifiedIdentifier;
 use crate::hir::{FieldId, FieldIdGenerator, FunctionId, FunctionIdGenerator, StructId, StructIdGenerator, VariableId, VariableIdGenerator};
 use crate::modules::symbols::{Function, FunctionModifier, ModuleId, ModuleIdGenerator, QualifiedName, Struct, StructField, Variable};
@@ -96,6 +95,7 @@ impl<T> From<Option<T>> for SymbolLookupResult<T> {
 pub struct GlobalScope {
     pub root_module: ModuleId,
     modules: HashMap<ModuleId, Module>,
+    pub external_modules: Vec<ModuleId>,
     module_id_gen: ModuleIdGenerator,
     current_module: ModuleId,
     functions: HashMap<FunctionId, Function>,
@@ -117,8 +117,9 @@ impl GlobalScope {
         );
         let root_module_id = root_module.id;
         modules.insert(root_module_id, root_module);
-        Self {
+        let mut scope = Self {
             modules,
+            external_modules: Vec::new(),
             module_id_gen: generator,
             root_module: root_module_id,
             current_module: root_module_id,
@@ -130,7 +131,9 @@ impl GlobalScope {
             struct_id_gen: StructIdGenerator::new(),
             fields: HashMap::new(),
             field_id_gen: FieldIdGenerator::new(),
-        }
+        };
+        scope.create_external_modules();
+        scope
     }
 
     pub fn get_surrounding_function(&self) -> Option<FunctionId> {
@@ -159,6 +162,35 @@ impl GlobalScope {
             None,
         );
         root_module
+    }
+
+    fn create_external_modules(&mut self) {
+
+        let external_modules_path = Self::get_external_modules_path();
+        let external_modules = std::fs::read_dir(external_modules_path);
+        match external_modules {
+            Ok(external_modules) => {
+                for module in external_modules {
+                    let module = module.unwrap();
+                    let module_path = module.path();
+                    let module_name = module_path.file_name().unwrap().to_str().unwrap();
+                    let module_name = module_name.to_string();
+                    let module_id = self.module_id_gen.next();
+                    let module = Module::new(module_id, module_name, Vec::new(), None);
+                    self.modules.insert(module_id, module);
+                    self.external_modules.push(module_id);
+                }
+            }
+            Err(_) => {
+                println!("Warning: Could not find external modules directory.");
+            }
+        }
+
+
+    }
+
+    pub fn get_external_modules_path() -> PathBuf {
+        dirs::home_dir().unwrap().join(".fusion").join("modules")
     }
 
     pub fn declare_module(&mut self, name: String) -> fusion_compiler::Result<ModuleId> {
@@ -265,10 +297,19 @@ impl GlobalScope {
     fn do_qualified_lookup<'a, SymbolId>(&self, name: &'a QualifiedIdentifier) -> Result<(&'a str, ModuleId), SymbolLookupResult<SymbolId>> {
         let mut name_parts: Vec<&str> = name.parts.iter().map(|part| part.span.literal.as_str()).collect();
         let mut effective_module_id = self.current_module;
+        let mut is_root = true;
         while name_parts.len() > 1 {
             let module_name = name_parts[0];
             let effective_module = self.get_module(&effective_module_id);
-            let module = effective_module.find_submodule(module_name, &self.modules);
+            let module = effective_module.find_submodule(module_name, &self.modules).or_else(
+                || {
+                    if is_root {
+                        self.find_external_module(module_name)
+                    } else {
+                        None
+                    }
+                }
+            );
             match module {
                 None => {
                     return Err(SymbolLookupResult::ModuleNotFound {
@@ -280,8 +321,16 @@ impl GlobalScope {
                     name_parts.remove(0);
                 }
             }
+            is_root = false;
         }
         Ok((name_parts[0], effective_module_id))
+    }
+
+    fn find_external_module(&self, name: &str) -> Option<ModuleId> {
+        self.external_modules.iter().find(|module_id| {
+            let module = self.get_module(module_id);
+            module.name == name
+        }).map(|module_id| *module_id)
     }
 
     pub fn lookup_field(&self, struct_id: &StructId, name: &str) -> Option<FieldId> {

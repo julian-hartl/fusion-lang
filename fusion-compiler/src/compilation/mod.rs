@@ -38,8 +38,8 @@ impl SourceTree {
         }
     }
 
-    fn parse_ast(&mut self, path: &Path, id: ModuleId) -> fusion_compiler::Result<SourceText> {
-        let text = std::fs::read_to_string(path).map_err(|_| ())?;
+    fn parse_ast(&mut self, path: &Path, id: ModuleId) -> Result<SourceText, std::io::Error> {
+        let text = std::fs::read_to_string(path)?;
         let source_text = SourceText::new(text);
         let mut lexer = Lexer::new(&source_text);
         let mut tokens = Vec::new();
@@ -108,9 +108,21 @@ impl CompilationUnit {
         let scope: Rc<RefCell<GlobalScope>> = Rc::new(RefCell::new(GlobalScope::new()));
         let diagnostics_bag: DiagnosticsBagCell = Rc::new(RefCell::new(DiagnosticsBag::new()));
         let mut source_tree = SourceTree::new(diagnostics_bag.clone(), scope.clone());
-        let id = scope.borrow().current_module().id;
-        let source_text = source_tree.parse_ast(input_file, id).expect("Could not find root module");
-
+        let scope_ref = scope.borrow();
+        let root_module_id = scope_ref.root_module;
+        let modules = scope_ref.external_modules.clone();
+        drop(scope_ref);
+        for external_module in modules {
+            let scope_ref = scope.borrow();
+            let module = scope_ref.get_module(&external_module);
+            let path = GlobalScope::get_external_modules_path().join(module.name.as_str()).join("lib.fs");
+            drop(scope_ref);
+            source_tree.parse_ast(&path, external_module).expect("Could not find external module");
+        }
+        let source_text = source_tree.parse_ast(input_file, root_module_id).expect("Could not find root module");
+        // let scope_ref = scope.borrow();
+        // source_tree
+        // drop(scope_ref);
         Self::check_diagnostics(&source_text, &diagnostics_bag)?;
         let hir_gen = HIRGen::new(Rc::clone(&diagnostics_bag), scope.clone());
         let hir = hir_gen.gen(&source_tree);

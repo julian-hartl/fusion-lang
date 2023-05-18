@@ -990,7 +990,7 @@ impl BodyGen {
                     HIRCallee::Undeclared(_) => {
                         unreachable!()
                     }
-                    HIRCallee::Invalid(_) => { unreachable!() }
+                    HIRCallee::Invalid => { unreachable!() }
                 };
                 let mut args = Vec::new();
                 for arg in &call_expr.arguments {

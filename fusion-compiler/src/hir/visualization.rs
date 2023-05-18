@@ -265,8 +265,8 @@ impl HIRVisitor for HIRVisualizer<'_> {
             HIRCallee::Undeclared(name) => {
                 self.write(name);
             }
-            HIRCallee::Invalid(expr) => {
-                self.visit_expr(expr);
+            HIRCallee::Invalid => {
+                self.write("<invalid>");
             }
         };
 

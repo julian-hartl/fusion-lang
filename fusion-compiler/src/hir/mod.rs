@@ -509,9 +509,7 @@ pub struct HIRCallExpression {
 pub enum HIRCallee {
     Function(FunctionId),
     Undeclared(String),
-    Invalid(
-        Box<HIRExpression>
-    ),
+    Invalid,
 }
 
 pub struct HIRFieldAccessExpression {
@@ -662,7 +660,13 @@ impl HIRGen {
 
     pub fn gen(mut self, tree: &SourceTree) -> HIR {
         // todo: handle top level statements
-        let root_id = self.scope.borrow().root_module;
+        let scope_ref = self.scope.borrow();
+        let root_id = scope_ref.root_module;
+        let external_modules = scope_ref.external_modules.clone();
+        drop(scope_ref);
+        for external_module in external_modules {
+            self.traverse_tree(&tree, external_module);
+        }
         self.traverse_tree(&tree, root_id);
         self.hir
     }
@@ -949,7 +953,7 @@ impl HIRGen {
                     HIRCallee::Undeclared(_) => {
                         Type::Error
                     }
-                    HIRCallee::Invalid(_) => {
+                    HIRCallee::Invalid => {
                         Type::Error
                     }
                 };
@@ -1172,14 +1176,13 @@ impl HIRGen {
                     }
                     Err(_) => {
                         // todo: we should not report errors anymore when doing this
-                        HIRCallee::Invalid(Box::new(self.gen_expression(callee)))
+                        HIRCallee::Invalid
                     }
                 }
             }
             _ => {
-                let expr = self.gen_expression(callee);
                 self.diagnostics_bag.borrow_mut().report_invalid_callee(&callee.span());
-                HIRCallee::Invalid(Box::new(expr))
+                HIRCallee::Invalid
             }
         }
     }
