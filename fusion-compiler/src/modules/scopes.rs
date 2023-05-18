@@ -325,8 +325,17 @@ impl GlobalScope {
         if self.lookup_function_unqualified(&name).is_some() {
             return Err(());
         }
+        let name = if modifiers.contains(&FunctionModifier::Extern) {
+            // todo: this is a quick fix for now. Later we should not do that but rather adapt the names of the asm functions
+            QualifiedName {
+                name,
+                module: self.current_module,
+            }
+        } else {
+            self.qualify_name(&name)
+        };
         let function = Function {
-            name: self.qualify_name(&name),
+            name,
             parameters,
             return_type,
             id,
@@ -406,7 +415,6 @@ impl GlobalScope {
     pub fn get_variable(&self, id: &VariableId) -> &Variable {
         self.variables.get(&id).unwrap()
     }
-
 
 
     pub fn enter_local_scope(&mut self) {
