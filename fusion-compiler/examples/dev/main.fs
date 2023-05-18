@@ -2,7 +2,8 @@ mod baz
 
 func main -> i64 {
 
-    std::io::write(1, "Hello, world!\n", 14)
+    std::io::println("Hello, world!")
+    std::io::println("Hello, world!")
     let result = baz::test::gcd(14, 21)
-    return std::string::strlen("Hello, world!\n")
+    return result
 }
