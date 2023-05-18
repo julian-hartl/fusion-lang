@@ -60,7 +60,8 @@ impl SourceTree {
 
         self.asts.insert(id, (root_ast, source_text));
         for mod_id in module_decls {
-
+            self.global_scope.borrow_mut().set_current_module(id);
+            self.diagnostics_bag.borrow_mut().set_current_module(id);
             let mod_name = &mod_id.span.literal;
             let mut mod_path = path.parent().unwrap().join(mod_name);
             if mod_path.is_dir() {
