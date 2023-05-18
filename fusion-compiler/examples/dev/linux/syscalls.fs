@@ -1,0 +1,1 @@
+func extern write(fd: i64, buf: *char, count: i64) -> i64
