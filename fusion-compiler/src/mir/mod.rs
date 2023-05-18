@@ -8,10 +8,9 @@ use std::rc::Rc;
 use fusion_compiler::{id, id_generator};
 
 use crate::diagnostics::DiagnosticsBagCell;
-use crate::hir;
 use crate::hir::{FunctionId, HIR, HIRAssignmentTargetKind, HIRBinaryOperator, HIRCallee, HIRExpression, HIRExpressionKind, HIRFunction, HIRGlobal, HIRLiteralValue, HIRStatement, HIRStatementKind, HIRUnaryOperator, VariableId};
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
-use crate::modules::symbols::{Function, Variable};
+use crate::modules::symbols::{Function};
 use crate::text::span::TextSpan;
 use crate::typings::{Layout, Type};
 
@@ -23,7 +22,8 @@ pub struct Body {
     label_gen: Rc<RefCell<LabelGenerator>>,
 }
 
-// todo: add support for external packages (std)
+// todo: add proper register allocation to ensure less usage of stack and reduce unnecessary moves.
+// this also includes choosing the right size of registers for each variable. e.g. al for a bool, ax for a u16, etc.
 
 impl Body {
     pub fn new(
