@@ -1136,7 +1136,7 @@ impl<'a> X86Codegen<'a> {
                 let (condition_operand, temps) = self.gen_operand_op(condition);
                 self.cmp_unchecked(
                     condition_operand,
-                    X86Operand::immediate(X86Immediate::QWord(0)),
+                    X86Operand::immediate(X86Immediate::Byte(0)),
                 );
                 self.free_temp_registers(&temps);
                 let then_label_idx = self.get_label(*then);
