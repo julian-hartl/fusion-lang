@@ -222,9 +222,9 @@ pub trait HIRBinaryOperatorVisitor<T> {
 
     fn visit_char_divide(&self) -> T;
 
-    fn visit_equals(&self, lhs: &Type, rhs: &Type) -> T;
+    fn visit_equals(&self, ty: &Type) -> T;
 
-    fn visit_not_equals(&self, lhs: &Type, rhs: &Type) -> T;
+    fn visit_not_equals(&self, ty: &Type) -> T;
 
     fn visit_i64_less_than(&self) -> T;
 
@@ -339,12 +339,18 @@ impl HIRBinaryOperator {
             }
             HIRBinaryOperator::Equals => {
                 match (left, right) {
-                    _ => Ok(visitor.visit_equals(left, right)),
+                    _ if left == right => Ok(visitor.visit_equals(left)),
+                    _ => {
+                        Err(())
+                    }
                 }
             }
             HIRBinaryOperator::NotEquals => {
                 match (left, right) {
-                    _ => Ok(visitor.visit_not_equals(left, right)),
+                    _ if left == right => Ok(visitor.visit_not_equals(left)),
+                    _ => {
+                        Err(())
+                    }
                 }
             }
             HIRBinaryOperator::LessThan => {
@@ -1330,11 +1336,11 @@ impl HIRBinaryOperatorVisitor<Type> for ResultTypeVisitor {
         Type::Char
     }
 
-    fn visit_equals(&self, lhs: &Type, rhs: &Type) -> Type {
+    fn visit_equals(&self, ty: &Type) -> Type {
         Type::Bool
     }
 
-    fn visit_not_equals(&self, lhs: &Type, rhs: &Type) -> Type {
+    fn visit_not_equals(&self, ty: &Type) -> Type {
         Type::Bool
     }
 

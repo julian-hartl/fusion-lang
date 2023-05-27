@@ -1134,9 +1134,10 @@ impl<'a> X86Codegen<'a> {
             } => {
                 // todo: maybe do not pass a Value here but rather a new type called condition which can hold bool binary expressions or literal values
                 let (condition_operand, temps) = self.gen_operand_op(condition);
+                let zero_check = X86Operand::immediate(X86Immediate::Byte(0));
                 self.cmp_unchecked(
                     condition_operand,
-                    X86Operand::immediate(X86Immediate::Byte(0)),
+                    zero_check,
                 );
                 self.free_temp_registers(&temps);
                 let then_label_idx = self.get_label(*then);
@@ -1592,6 +1593,7 @@ impl<'a> X86Codegen<'a> {
         // todo: check if store_at is already mapped to a register
         let store_at_reg = self.use_temp_reg(X86Size::Byte);
         assert_eq!(store_at_reg.size(), X86Size::Byte);
+        assert_eq!(rhs_op.size, lhs_op.size, "Comparing operands (op: {}) of different sizes is not supported: {:?} and {:?}", op, lhs_op, rhs_op);
         let source = self.ensure_in_reg(lhs_op);
         let comp_instruction = match op {
             BinOp::And => {
