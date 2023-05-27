@@ -1,9 +1,9 @@
-use crate::modules::symbols::ModuleId;
+use crate::modules::symbols::ModuleIdx;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct TextLocation {
     pub span: TextSpan,
-    pub module_id: ModuleId,
+    pub module_id: ModuleIdx,
 }
 
 #[derive(Debug, PartialEq, Clone)]

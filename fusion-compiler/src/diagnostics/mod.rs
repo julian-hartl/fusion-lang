@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::ast::lexer::{Token, TokenKind};
 use crate::ast::QualifiedIdentifier;
-use crate::modules::symbols::ModuleId;
+use crate::modules::symbols::ModuleIdx;
 use crate::text::span::{TextLocation, TextSpan};
 use crate::typings::Type;
 
@@ -34,18 +34,18 @@ pub type DiagnosticsBagCell = Rc<RefCell<DiagnosticsBag>>;
 #[derive(Debug)]
 pub struct DiagnosticsBag {
     pub diagnostics: Vec<Diagnostic>,
-    current_module_id: ModuleId,
+    current_module_id: ModuleIdx,
 }
 
 impl DiagnosticsBag {
     pub fn new(
-        current_module_id: ModuleId,
+        current_module_id: ModuleIdx,
     ) -> Self {
         DiagnosticsBag { diagnostics: vec![] , current_module_id }
     }
 
 
-    pub fn set_current_module(&mut self, id: ModuleId) {
+    pub fn set_current_module(&mut self, id: ModuleIdx) {
         self.current_module_id = id;
     }
 
@@ -241,6 +241,18 @@ impl DiagnosticsBag {
 
     pub fn report_cannot_index_type(&mut self, span: &TextSpan, ty: &Type) {
         self.report_error(format!("Cannot index type '{}'", ty), span.clone());
+    }
+
+    pub fn report_struct_has_infinite_size(&mut self, decl_token: &Token) {
+        self.report_error(format!("Struct '{}' has infinite size", decl_token.span.literal), decl_token.span.clone());
+    }
+
+    pub fn report_missing_field_in_struct(&mut self, span: &TextSpan, struct_name: &str, field_name: &str) {
+        self.report_error(format!("Struct '{}' is missing field '{}'", struct_name, field_name), span.clone());
+    }
+
+    pub fn report_cannot_assign_to_immutable_index(&mut self, span: &TextSpan) {
+        self.report_error(format!("Cannot assign to immutable index '{}'", span.literal), span.clone());
     }
 }
 

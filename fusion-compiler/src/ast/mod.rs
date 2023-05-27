@@ -17,12 +17,11 @@ pub mod printer;
 #[derive(Debug, Clone)]
 pub struct Ast {
     pub statements: Vec<ASTStatement>,
-    pub structs: Vec<Token>,
 }
 
 impl Ast {
     pub fn new() -> Self {
-        Self { statements: Vec::new(), structs: Vec::new() }
+        Self { statements: Vec::new() }
     }
 
 
@@ -822,6 +821,8 @@ pub enum ASTBinaryOperatorKind {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
+    // Logial
+    LogicalAnd,
 }
 
 #[derive(Debug, Clone)]
@@ -846,12 +847,13 @@ impl ASTBinaryOperator {
             ASTBinaryOperatorKind::BitwiseAnd => 17,
             ASTBinaryOperatorKind::BitwiseXor => 16,
             ASTBinaryOperatorKind::BitwiseOr => 15,
-            ASTBinaryOperatorKind::Equals => 30,
             ASTBinaryOperatorKind::NotEquals => 30,
             ASTBinaryOperatorKind::LessThan => 29,
             ASTBinaryOperatorKind::LessThanOrEqual => 29,
             ASTBinaryOperatorKind::GreaterThan => 29,
             ASTBinaryOperatorKind::GreaterThanOrEqual => 29,
+            ASTBinaryOperatorKind::Equals => 11,
+            ASTBinaryOperatorKind::LogicalAnd => 10,
         }
     }
 }

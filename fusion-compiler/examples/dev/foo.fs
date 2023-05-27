@@ -1,7 +1,8 @@
 struct Foo {
-    foo: i64
+    foo: i64,
+    test: bool
 }
 
 func foo() -> Foo {
-    Foo { foo: 42 }
+    Foo { foo: 42, test: true }
 }

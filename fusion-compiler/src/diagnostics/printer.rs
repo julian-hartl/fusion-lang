@@ -7,12 +7,12 @@ use termion::color::{Color, Fg, Red, Reset, Yellow};
 
 use crate::diagnostics::Diagnostic;
 use crate::modules::scopes::GlobalScopeCell;
-use crate::modules::symbols::ModuleId;
+use crate::modules::symbols::ModuleIdx;
 use crate::text::SourceText;
 use crate::text::span::TextSpan;
 
 pub struct DiagnosticsPrinter<'a> {
-    source_texts:  HashMap<ModuleId,&'a SourceText>,
+    source_texts:  HashMap<ModuleIdx,&'a SourceText>,
     diagnostics: &'a [Diagnostic],
     scope: GlobalScopeCell,
 }
@@ -20,7 +20,7 @@ pub struct DiagnosticsPrinter<'a> {
 const PREFIX_LENGTH: usize = 8;
 
 impl<'a> DiagnosticsPrinter<'a> {
-    pub fn new(texts: HashMap<ModuleId,&'a SourceText>, diagnostics: &'a [Diagnostic], global_scope: GlobalScopeCell) -> Self {
+    pub fn new(texts: HashMap<ModuleIdx,&'a SourceText>, diagnostics: &'a [Diagnostic], global_scope: GlobalScopeCell) -> Self {
         Self {
             source_texts: texts,
             diagnostics,

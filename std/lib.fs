@@ -1,2 +1,2 @@
-mod string
 mod io
+mod string

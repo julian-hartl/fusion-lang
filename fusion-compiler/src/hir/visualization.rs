@@ -1,7 +1,7 @@
 use std::fmt::format;
 use std::ops::Not;
 
-use crate::hir::{HIR, HIRAssignmentExpression, HIRAssignmentTargetKind, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRIndexExpression, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStructInitExpression, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
+use crate::hir::{HIR, HIRAssignmentExpression, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRIndexExpression, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStructInitExpression, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
 use crate::hir::visitor::HIRVisitor;
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
 
@@ -53,6 +53,27 @@ impl<'a> HIRVisualizer<'a> {
                     self.new_line();
                 }
             }
+        }
+        for struct_ in scope_ref.structs.iter() {
+            self.write("struct");
+            self.write_whitespace();
+            self.write(&struct_.name.to_string());
+            self.write_whitespace();
+            self.write("{");
+            self.indent();
+            self.new_line();
+            for field in &struct_.fields {
+                self.write_indent();
+                let field = scope_ref.get_field(field);
+                self.write(field.name.as_str());
+                self.write(":");
+                self.write_whitespace();
+                self.write(format!("{}", field.ty).as_str());
+                self.new_line();
+            }
+            self.unindent();
+            self.write("}");
+            self.new_line();
         }
         for (function, body) in self.hir.functions(&scope_ref) {
             self.write("func");
@@ -227,27 +248,7 @@ impl HIRVisitor for HIRVisualizer<'_> {
     }
 
     fn visit_assignment_expr(&mut self, expr: &HIRAssignmentExpression) {
-        match &expr.target.kind {
-            HIRAssignmentTargetKind::Variable(variable_id) => {
-                let scope = self.scope.clone();
-                let scope_ref = scope.borrow();
-                let variable = scope_ref.get_variable(variable_id);
-                self.write(&variable.name)
-            }
-            HIRAssignmentTargetKind::Deref(expr) => {
-                self.write("*");
-                self.visit_expr(expr);
-            }
-            HIRAssignmentTargetKind::Error => {}
-            HIRAssignmentTargetKind::Field(id, target) => {
-                self.visit_expr(target);
-                self.write(".");
-                let scope = self.scope.clone();
-                let scope_ref = scope.borrow();
-                let field = scope_ref.get_field(id);
-                self.write(&field.name);
-            }
-        };
+        self.visit_expr(&expr.target);
         self.write_whitespace();
         self.write("=");
         self.write_whitespace();
@@ -271,9 +272,9 @@ impl HIRVisitor for HIRVisualizer<'_> {
         };
 
         self.write("(");
-        for (i, arg) in expr.arguments.iter().enumerate() {
+        for (i, arg) in expr.args.iter().enumerate() {
             self.visit_expr(arg);
-            if i < expr.arguments.len() - 1 {
+            if i < expr.args.len() - 1 {
                 self.write(",");
                 self.write_whitespace();
             }
@@ -304,7 +305,7 @@ impl HIRVisitor for HIRVisualizer<'_> {
 
     fn visit_deref_expr(&mut self, expr: &HIRDerefExpression) {
         self.write("*");
-        self.visit_expr(&expr.expression);
+        self.visit_expr(&expr.target);
     }
 
     fn visit_cast_expr(&mut self, expr: &HIRCastExpression) {

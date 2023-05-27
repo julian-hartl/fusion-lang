@@ -1,4 +1,4 @@
-use crate::hir::{FunctionId, HIR, HIRAssignmentExpression, HIRBinaryExpression, HIRBinaryOperator, HIRBlockStatement, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRExpression, HIRExpressionKind, HIRExpressionStatement, HIRIfStatement, HIRIndexExpression, HIRLiteralExpression, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStatementKind, HIRStructInitExpression, HIRUnaryExpression, HIRUnaryOperator, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
+use crate::hir::{FunctionIdx, HIR, HIRAssignmentExpression, HIRBinaryExpression, HIRBinaryOperator, HIRBlockStatement, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRExpression, HIRExpressionKind, HIRExpressionStatement, HIRIfStatement, HIRIndexExpression, HIRLiteralExpression, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStatementKind, HIRStructInitExpression, HIRUnaryExpression, HIRUnaryOperator, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
 
 pub trait HIRVisitor {
     fn visit(&mut self, hir: &HIR) {
@@ -7,11 +7,11 @@ pub trait HIRVisitor {
         }
     }
 
-    fn visit_function(&mut self, function_id: &FunctionId, statements: &Vec<HIRStatement>) {
+    fn visit_function(&mut self, function_id: &FunctionIdx, statements: &Vec<HIRStatement>) {
         self.default_visit_function(function_id, statements);
     }
 
-    fn default_visit_function(&mut self, function_id: &FunctionId, statements: &Vec<HIRStatement>) {
+    fn default_visit_function(&mut self, function_id: &FunctionIdx, statements: &Vec<HIRStatement>) {
         for statement in statements {
             self.visit_stmt(statement);
         }
@@ -81,9 +81,6 @@ pub trait HIRVisitor {
                 self.visit_call_expr(expr);
             }
             HIRExpressionKind::FieldAccess(_) => {}
-            HIRExpressionKind::Parenthesized(expr) => {
-                self.visit_parenthesized_expr(expr);
-            }
             HIRExpressionKind::Void => {
                 self.visit_void_expr();
             }

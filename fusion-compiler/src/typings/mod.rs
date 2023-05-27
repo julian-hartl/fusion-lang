@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::ops::DerefMut;
 
 use crate::ast::lexer::TokenKind;
-use crate::hir::StructId;
+use crate::hir::StructIdx;
 use crate::modules::scopes::GlobalScope;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -32,7 +32,7 @@ pub enum Type {
     Char,
     Void,
     Ptr(Box<Type>, bool),
-    Struct(StructId),
+    Struct(StructIdx),
     Function(FunctionType),
     Unresolved,
     Error,

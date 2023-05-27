@@ -16,12 +16,11 @@ use crate::formatting::Formatter;
 use crate::hir::{HIR, HIRGen};
 use crate::mir::{MIR, MIRGen};
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
-use crate::modules::symbols::ModuleId;
-use crate::text;
+use crate::modules::symbols::ModuleIdx;
 use crate::text::SourceText;
 
 pub struct SourceTree {
-    pub asts: HashMap<ModuleId, (Ast, SourceText)>,
+    pub asts: HashMap<ModuleIdx, (Ast, SourceText)>,
     diagnostics_bag: DiagnosticsBagCell,
     global_scope: GlobalScopeCell,
 }
@@ -38,7 +37,7 @@ impl SourceTree {
         }
     }
 
-    fn parse_ast(&mut self, path: &Path, id: ModuleId) -> Result<(), std::io::Error> {
+    fn parse_ast(&mut self, path: &Path, id: ModuleIdx) -> Result<(), std::io::Error> {
         self.global_scope.borrow_mut().set_current_module(id);
         self.diagnostics_bag.borrow_mut().set_current_module(id);
         let text = std::fs::read_to_string(path)?;
@@ -52,6 +51,7 @@ impl SourceTree {
         let mut parser = Parser::new(
             tokens,
             Rc::clone(&self.diagnostics_bag),
+            Rc::clone(&self.global_scope),
             &mut root_ast,
         );
         parser.parse();
@@ -104,11 +104,17 @@ impl SourceTree {
 
     pub fn print_diagnostics(&self) {
         let diagnostics_bag = self.diagnostics_bag.borrow();
-        let source_texts: HashMap<ModuleId, &SourceText> = self.asts.iter().map(|(id, (ast, source_text))| {
+        let source_texts: HashMap<ModuleIdx, &SourceText> = self.asts.iter().map(|(id, (ast, source_text))| {
             (*id, source_text)
         }).collect();
-        let printer = DiagnosticsPrinter::new(source_texts, &diagnostics_bag.diagnostics,self.global_scope.clone());
+        let printer = DiagnosticsPrinter::new(source_texts, &diagnostics_bag.diagnostics, self.global_scope.clone());
         printer.print();
+    }
+
+    pub fn visit<V>(&self, v: &mut V) where V: SourceTreeVisitor {
+        for (id, (ast, _e)) in self.asts.iter() {
+            v.visit_module(id, ast);
+        }
     }
 }
 
@@ -140,6 +146,16 @@ impl CompilationUnit {
         source_tree.check_diagnostics()?;
         let hir_gen = HIRGen::new(Rc::clone(&diagnostics_bag), scope.clone());
         let hir = hir_gen.gen(&source_tree);
+        let scope_ref = scope.borrow();
+        let infinite_size_check_result = scope_ref.check_structs_for_infinite_size();
+        if let Err(struct_id) = infinite_size_check_result {
+            let s = &scope_ref.get_struct(&struct_id);
+            let decl_token = &s.decl_token;
+            let decl_in_module = &s.decl_in_module;
+            diagnostics_bag.borrow_mut().set_current_module(*decl_in_module);
+            diagnostics_bag.borrow_mut().report_struct_has_infinite_size(decl_token);
+        }
+        drop(scope_ref);
         hir.visualize(scope.clone());
         source_tree.check_diagnostics()?;
         let mir_gen = MIRGen::new(
@@ -166,7 +182,6 @@ impl CompilationUnit {
     }
 
 
-
     pub fn format(ast: &Ast, save_to: &Path) -> Result<(), std::io::Error> {
         let formatter = Formatter::new(&ast);
         let formatted = formatter.format();
@@ -176,4 +191,8 @@ impl CompilationUnit {
         file.write_all(formatted.as_bytes())?;
         Ok(())
     }
+}
+
+pub trait SourceTreeVisitor {
+    fn visit_module(&mut self, module_id: &ModuleIdx, ast: &Ast);
 }

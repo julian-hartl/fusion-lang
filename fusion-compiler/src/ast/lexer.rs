@@ -16,6 +16,7 @@ pub enum TokenKind {
     Equals,
     Percent,
     Ampersand,
+    DoubleAmpersand,
     Pipe,
     Caret,
     DoubleAsterisk,
@@ -116,6 +117,7 @@ impl Display for TokenKind {
             TokenKind::Mod => write!(f, "Mod"),
             TokenKind::OpenBracket => write!(f, "OpenBracket"),
             TokenKind::CloseBracket => write!(f, "CloseBracket"),
+            TokenKind::DoubleAmpersand => write!(f, "DoubleAmpersand"),
         }
     }
 }
@@ -212,7 +214,9 @@ impl<'a> Lexer<'a> {
             '=' => {
                 self.lex_potential_double_char_operator('=', TokenKind::Equals, TokenKind::EqualsEquals)
             }
-            '&' => TokenKind::Ampersand,
+            '&' => {
+                self.lex_potential_double_char_operator('&', TokenKind::Ampersand, TokenKind::DoubleAmpersand)
+            }
             '|' => TokenKind::Pipe,
             '^' => TokenKind::Caret,
             '~' => TokenKind::Tilde,

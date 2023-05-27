@@ -1,4 +1,5 @@
 struct Test {
+    foo: root::foo::Foo,
 }
 
 func test() {

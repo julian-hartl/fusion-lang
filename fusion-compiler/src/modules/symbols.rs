@@ -1,19 +1,21 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
-use fusion_compiler::{id, id_generator};
+use fusion_compiler::{idx};
+use crate::ast::lexer::Token;
 
-use crate::hir::{FieldId, FunctionId, StructId, VariableId};
+use crate::hir::{FieldIdx, FunctionIdx, StructIdx, VariableIdx};
 use crate::modules::scopes::GlobalScope;
 use crate::typings::{Layout, Type};
 
-id!(ModuleId);
-id_generator!(ModuleIdGenerator, ModuleId);
+use fusion_compiler::Idx;
+
+idx!(ModuleIdx);
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct QualifiedName {
     pub name: String,
-    pub module: ModuleId,
+    pub module: ModuleIdx,
 }
 
 impl QualifiedName {
@@ -32,16 +34,14 @@ impl Display for QualifiedName {
 pub struct Variable {
     pub name: String,
     pub ty: Type,
-    pub id: VariableId,
     pub is_mutable: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Function {
     pub name: QualifiedName,
-    pub parameters: Vec<VariableId>,
+    pub parameters: Vec<VariableIdx>,
     pub return_type: Type,
-    pub id: FunctionId,
     pub modifiers: Vec<FunctionModifier>,
 }
 
@@ -56,17 +56,15 @@ pub enum FunctionModifier {
     Extern,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct Struct {
     pub name: QualifiedName,
-    pub fields: Vec<FieldId>,
-    pub id: StructId,
+    pub fields: Vec<FieldIdx>,
+    pub decl_token: Token,
+    pub decl_in_module: ModuleIdx,
 }
 
 impl Struct {
-    pub fn ty(&self) -> Type {
-        Type::Struct(self.id)
-    }
 
     pub fn layout(&self, scope: &GlobalScope) -> Layout {
         let mut size = 0;
@@ -88,6 +86,5 @@ impl Struct {
 pub struct StructField {
     pub name: String,
     pub ty: Type,
-    pub id: FieldId,
-    pub struct_id: StructId,
+    pub struct_id: StructIdx,
 }

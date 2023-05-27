@@ -1,71 +1,54 @@
+use std::any::Any;
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
+use std::env::var;
+use std::fmt::{Display, Formatter, write};
 use std::io::Write;
-use std::ops::Deref;
+use std::ops::{Add, Deref};
 use std::rc::Rc;
 
-use fusion_compiler::{id, id_generator};
+use fusion_compiler::{idx, Idx, IdxVec};
 
 use crate::diagnostics::DiagnosticsBagCell;
-use crate::hir::{FunctionId, HIR, HIRAssignmentTargetKind, HIRBinaryOperator, HIRCallee, HIRExpression, HIRExpressionKind, HIRFunction, HIRGlobal, HIRLiteralValue, HIRStatement, HIRStatementKind, HIRUnaryOperator, VariableId};
+use crate::hir::{FieldIdx, FunctionIdx, HIR, HIRBinaryOperator, HIRCallee, HIRExpression, HIRExpressionKind, HIRFunction, HIRGlobal, HIRLiteralExpression, HIRLiteralValue, HIRStatement, HIRStatementKind, HIRUnaryOperator, VariableIdx};
+use crate::mir::Category::RValue;
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
-use crate::modules::symbols::{Function};
+use crate::modules::symbols::Function;
 use crate::text::span::TextSpan;
 use crate::typings::{Layout, Type};
 
-pub struct Body {
-    pub basic_blocks: Vec<BasicBlock>,
-    pub scope: MIRScope,
-    pub function: FunctionId,
-    pub parameters: Vec<LocalPlace>,
-    label_gen: Rc<RefCell<LabelGenerator>>,
+idx!(BasicBlockIdx);
+
+impl Display for BasicBlockIdx {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "bb{}", self.as_idx())
+    }
 }
 
-// todo: add proper register allocation to ensure less usage of stack and reduce unnecessary moves.
-// this also includes choosing the right size of registers for each variable. e.g. al for a bool, ax for a u16, etc.
+impl Add<usize> for BasicBlockIdx {
+    type Output = Self;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        Self::new(self.as_idx() + rhs)
+    }
+}
+
+pub struct Body {
+    pub basic_blocks: IdxVec<BasicBlockIdx, BasicBlock>,
+    pub scope: BodyScope,
+    pub function: FunctionIdx,
+}
 
 impl Body {
     pub fn new(
-        function: FunctionId,
-        label_gen: Rc<RefCell<LabelGenerator>>,
+        function: FunctionIdx,
         scope: GlobalScopeCell,
     ) -> Self {
         Self {
-            scope: MIRScope::new(scope),
-            basic_blocks: vec![],
+            scope: BodyScope::new(scope, function),
             function,
-            label_gen,
-            parameters: vec![],
-
+            basic_blocks: IdxVec::new(),
         }
-    }
-
-    pub fn new_basic_block(&mut self) -> Label {
-        self.label_gen.borrow_mut().next()
-    }
-
-    pub fn find_basic_block(&self, label: &Label) -> Option<&BasicBlock> {
-        self.basic_blocks.iter()
-            .find(|block| block.label == *label)
-    }
-}
-
-id!(Label);
-id_generator!(LabelGenerator, Label);
-
-impl Display for Label {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, ".L{}", self.index)
-    }
-}
-
-id!(GlobalLabel);
-id_generator!(GlobalLabelGenerator, GlobalLabel);
-
-impl Display for GlobalLabel {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, ".LC{}", self.index)
     }
 }
 
@@ -73,20 +56,32 @@ impl Display for GlobalLabel {
 pub struct BasicBlock {
     pub instructions: Vec<Instruction>,
     pub terminator: Terminator,
-    pub label: Label,
 }
 
 impl BasicBlock {
-    pub fn new(label: Label) -> Self {
+    pub fn new() -> Self {
         Self {
             instructions: vec![],
             terminator: Terminator {
                 kind: TerminatorKind::Next,
                 span: None,
             },
-            label,
         }
     }
+}
+
+idx!(GlobalIdx);
+
+impl Display for GlobalIdx {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "global_{}", self.as_idx())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Global {
+    pub value: GlobalValue,
+    pub ty: MIRType,
 }
 
 #[derive(Debug, Clone)]
@@ -94,95 +89,173 @@ pub enum GlobalValue {
     String(String),
 }
 
-impl GlobalValue {
-    pub fn layout(&self) -> Layout {
+impl Display for GlobalValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            GlobalValue::String(string) => Layout {
-                size: string.len() as u32 + 1,
-                alignment: 1,
-            },
+            GlobalValue::String(string) => write!(f, "\"{}\"", string),
         }
     }
 }
 
 pub struct GlobalMIRScope {
-    global_place_gen: Rc<RefCell<GlobalLabelGenerator>>,
-    globals: HashMap<GlobalLabel, GlobalValue>,
+    globals: IdxVec<GlobalIdx, Global>,
 }
 
 impl GlobalMIRScope {
     pub fn new() -> Self {
         Self {
-            global_place_gen: Rc::new(RefCell::new(GlobalLabelGenerator::new())),
-            globals: HashMap::new(),
+            globals: IdxVec::new(),
         }
     }
 
-    pub fn add_global_string(&mut self, string: String) -> GlobalPlace {
-        let label = self.global_place_gen.borrow_mut().next();
+    pub fn add_global_string(&mut self, string: String) -> GlobalIdx {
         let value = GlobalValue::String(string);
-        let layout = value.layout();
-        self.globals.insert(label, value);
-        GlobalPlace::new(label, layout)
+        self.globals.push(
+            Global {
+                ty: MIRType::Ptr(Box::new(MIRType::Char)),
+                value,
+            }
+        )
     }
 }
 
-pub struct MIRScope {
-    pub place_count: u32,
-    mapped_variables: HashMap<VariableId, LocalPlace>,
-    pub(crate) locals: Vec<VariableId>,
-    scope: GlobalScopeCell,
-    pub locals_size: u32,
-    nesting_level: u32,
+
+pub struct Local {
+    pub ty: MIRType,
+    pub variable_idx: Option<VariableIdx>,
+}
+idx!(LocalScopeIdx);
+
+impl Display for LocalScopeIdx {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "scope_{}", self.as_idx())
+    }
 }
 
-impl MIRScope {
+pub struct LocalScope {
+    pub children: Vec<LocalScopeIdx>,
+    pub locals: Vec<LocalIdx>,
+}
+
+pub struct BodyScope {
+    mapped_variables: HashMap<VariableIdx, LocalIdx>,
+    scope: GlobalScopeCell,
+    scopes: IdxVec<LocalScopeIdx, LocalScope>,
+    scope_stack: Vec<LocalScopeIdx>,
+    pub(crate) locals: IdxVec<LocalIdx, Local>,
+    function_id: FunctionIdx,
+    arg_count: usize,
+}
+
+impl BodyScope {
     pub fn new(
         scope: GlobalScopeCell,
+        function_id: FunctionIdx,
     ) -> Self {
-        Self {
-            place_count: 0,
+        let mut scope = Self {
+            scope_stack: vec![],
             mapped_variables: HashMap::new(),
-            locals: vec![],
             scope,
-            locals_size: 0,
-            nesting_level: 0,
+            scopes: IdxVec::new(),
+            locals: IdxVec::new(),
+            function_id,
+            arg_count: 0,
+        };
+        scope.populate();
+        scope
+    }
+
+    pub fn return_place(&self) -> Place {
+        Place::new(Place::RETURN_PLACE, None)
+    }
+
+    fn populate(&mut self) {
+        let scope = self.scope.borrow();
+        let function = scope.get_function(&self.function_id);
+        self.arg_count = function.parameters.len();
+        let params = function.parameters.clone();
+        let return_type = self.map_hir_ty(&function.return_type);
+        drop(scope);
+        self.enter_scope();
+
+        self.add_local(
+            Local {
+                variable_idx: None,
+                ty: return_type,
+            },
+        );
+        for param in params.iter() {
+            self.new_mapped_local(param);
         }
     }
 
-    pub fn new_local_place(&mut self, layout: Layout) -> LocalPlace {
-        let current_count = self.place_count;
-        self.place_count += 1;
-        // todo: we should handle different scopes (lifetimes are different)
-        self.locals_size += layout.size;
-        LocalPlace::no_offset(Var::new(current_count), layout)
+    pub fn all_locals(&self) -> &Vec<Local> {
+        self.locals.as_vec()
     }
 
-    pub fn new_mapped_variable(&mut self, id: &VariableId) -> LocalPlace {
+    pub fn new_local(&mut self, ty: &Type) -> LocalIdx {
+        let ty = self.map_hir_ty(ty);
+        self.add_local(Local {
+            ty,
+            variable_idx: None,
+        })
+    }
+
+    pub fn new_mapped_local(&mut self, id: &VariableIdx) -> LocalIdx {
         let scope = self.get_scope();
         let variable = scope.get_variable(id);
-        let layout = variable.ty.layout(&scope);
+        let ty = variable.ty.clone();
         drop(scope);
-        let temp = self.new_local_place(layout);
-        self.mapped_variables.insert(*id, temp);
-        self.locals.push(*id);
+        let temp = self.add_local(Local {
+            ty: self.map_hir_ty(&ty),
+            variable_idx: Some(*id),
+        });
+        self.mapped_variables.insert(*id, temp.clone());
         temp
+    }
+
+    fn add_local(&mut self, local: Local) -> LocalIdx {
+        let id = self.locals.push(local);
+        self.current_scope_mut().expect(
+            "No current scope"
+        ).locals.push(id);
+        id
     }
 
     fn get_scope(&self) -> Ref<GlobalScope> {
         self.scope.borrow()
     }
 
-    pub fn get_variable(&self, id: &VariableId) -> Option<LocalPlace> {
-        self.mapped_variables.get(id).copied()
+    pub fn get_variable(&self, id: &VariableIdx) -> Option<&LocalIdx> {
+        self.mapped_variables.get(id)
     }
 
     fn enter_scope(&mut self) {
-        self.nesting_level += 1;
+        let id = self.scopes.push(LocalScope {
+            children: vec![],
+            locals: vec![],
+        }
+        );
+        if let Some(scope) = self.current_scope_mut() {
+            scope.children.push(id);
+        }
+        self.scope_stack.push(id);
     }
 
     fn exit_scope(&mut self) {
-        self.nesting_level -= 1;
+        self.scope_stack.pop();
+    }
+
+    fn current_scope_mut(&mut self) -> Option<&mut LocalScope> {
+        Some(self.scopes.get_mut(*self.scope_stack.last()?))
+    }
+
+    fn current_scope(&self) -> &LocalScope {
+        self.scopes.get(*self.scope_stack.last().unwrap())
+    }
+
+    fn map_hir_ty(&self, ty: &Type) -> MIRType {
+        MIRType::from_type(ty, &self.get_scope())
     }
 }
 
@@ -198,7 +271,7 @@ impl Instruction {
         scope: &GlobalScope,
     ) -> String {
         match &self.kind {
-            InstructionKind::Store { place, value: init } => {
+            InstructionKind::Assign { place, value: init } => {
                 format!("{} = {}", place, init)
             }
             InstructionKind::Call { function_id, args, return_value_place: return_value_ptr } => {
@@ -212,345 +285,517 @@ impl Instruction {
                 s.push_str(")");
                 s
             }
-            InstructionKind::BinaryOp { operator: op, lhs, rhs, result_place: result_ptr } => {
-                format!("{} = {} {} {}", result_ptr, self.format_bin_op(op), lhs, rhs)
+            InstructionKind::StorageLive { local } => {
+                format!("StorageLive({})", local)
             }
-            InstructionKind::UnaryOp { operator: op, operand: primary, result_place: result_ptr } => {
-                format!("{} = {} {}", result_ptr, self.format_un_op(op), primary)
+            InstructionKind::StorageDead { local } => {
+                format!("StorageDead({})", local)
             }
-            InstructionKind::Move {
-                from,
-                to,
-            }
-            =>
-                {
-                    format!("{} = move {}", to, from)
-                }
-            InstructionKind::Deref { from, to } => {
-                format!("{} = deref {}", to, from)
-            }
-            InstructionKind::Index { base, index, result_place } => {
-                format!("{} = index {} {}", result_place, base, index)
-            }
-        }
-    }
-
-    fn format_bin_op(
-        &self,
-        op: &HIRBinaryOperator,
-    ) -> &'static str {
-        match op {
-            HIRBinaryOperator::Add => {
-                "add"
-            }
-            HIRBinaryOperator::Subtract => {
-                "sub"
-            }
-            HIRBinaryOperator::Multiply => {
-                "mul"
-            }
-            HIRBinaryOperator::Divide => {
-                "div"
-            }
-            HIRBinaryOperator::Equals => {
-                "eq"
-            }
-            HIRBinaryOperator::NotEquals => {
-                "ne"
-            }
-            HIRBinaryOperator::LessThan => {
-                "lt"
-            }
-            HIRBinaryOperator::LessThanOrEqual => {
-                "le"
-            }
-            HIRBinaryOperator::GreaterThan => {
-                "gt"
-            }
-            HIRBinaryOperator::GreaterThanOrEqual => {
-                "ge"
-            }
-            HIRBinaryOperator::BitwiseAnd => {
-                "and"
-            }
-            HIRBinaryOperator::BitwiseOr => {
-                "or"
-            }
-            HIRBinaryOperator::BitwiseXor => {
-                "xor"
-            }
-            HIRBinaryOperator::Modulo => {
-                "mod"
-            }
-        }
-    }
-
-    fn format_un_op(
-        &self,
-        op: &HIRUnaryOperator,
-    ) -> &'static str {
-        match op {
-            HIRUnaryOperator::Negate => {
-                "neg"
-            }
-            HIRUnaryOperator::BitwiseNot => {
-                "not"
+            InstructionKind::PlaceMention(place) => {
+                format!("{}", place)
             }
         }
     }
 }
+idx!(LocalIdx);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Var {
-    pub id: u32,
-}
-
-impl Var {
-    pub fn new(id: u32) -> Self {
-        Self {
-            id,
-        }
+impl Display for LocalIdx {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "_{}", self.index)
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum Place {
-    Local(LocalPlace),
-    Global(GlobalPlace),
+#[derive(Debug, Clone)]
+pub struct Place {
+    pub local: LocalIdx,
+    pub projection: Option<Projection>,
 }
 
 impl Place {
-    pub fn layout(&self) -> &Layout {
-        match self {
-            Place::Local(local) => {
-                &local.layout
+    pub fn ty(&self, scope: &BodyScope, global_scope: &GlobalScope) -> Option<MIRType> {
+        let local = scope.locals.get(self.local);
+        let ty = local.ty.clone();
+        let ty = match &self.projection {
+            None => {
+                ty
             }
-            Place::Global(global) => {
-                &global.layout
+            Some(proj) => {
+                match proj {
+                    Projection::Field(field_idx) => {
+                        MIRType::from_type(&global_scope.get_field(field_idx).ty, global_scope)
+                    }
+                    Projection::Index(_) => {
+                        ty.deref_type().cloned()?
+                    }
+                    Projection::ConstantIndex(_) => {
+                        ty.deref_type().cloned()?
+                    }
+                    Projection::Deref => {
+                        ty.deref_type().cloned()?
+                    }
+                }
             }
-        }
+        };
+        Some(ty)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Projection {
+    Field(FieldIdx),
+    Index(LocalIdx),
+    ConstantIndex(u64),
+    Deref,
+}
+
+
+impl Place {
+    pub const RETURN_PLACE: LocalIdx = LocalIdx {
+        index: 0,
+    };
+
+    pub fn return_place() -> Self {
+        Self::new(Self::RETURN_PLACE, None)
     }
 
-    pub fn into_local(self) -> LocalPlace {
-        match self {
-            Place::Local(local) => {
-                local
-            }
-            Place::Global(global) => {
-                panic!("Expected local place, got global place: {}", global)
-            }
+    pub fn new(local: LocalIdx, projection: Option<Projection>) -> Self {
+        Self {
+            local,
+            projection,
         }
     }
 }
 
 impl Display for Place {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Place::Local(local) => {
-                write!(f, "{}", local)
-            }
-            Place::Global(global) => {
-                write!(f, "{}", global)
+        write!(f, "{}", self.local)?;
+        for projection in &self.projection {
+            match projection {
+                Projection::Field(field) => {
+                    write!(f, ".{}", field.as_idx())?;
+                }
+                Projection::Index(local) => {
+                    write!(f, "[{}]", local)?;
+                }
+                Projection::ConstantIndex(index) => {
+                    write!(f, "[{}]", index)?;
+                }
+                Projection::Deref => {
+                    write!(f, "^")?;
+                }
             }
         }
+        Ok(())
     }
 }
 
 
-#[derive(Debug, Copy, Clone)]
-pub struct GlobalPlace {
-    pub label: GlobalLabel,
-    pub layout: Layout,
-}
-
-impl GlobalPlace {
-    pub fn new(label: GlobalLabel, layout: Layout) -> Self {
-        Self {
-            label,
-            layout,
-        }
-    }
-
-    pub fn into_place(self) -> Place {
-        Place::Global(self)
-    }
-}
-
-impl Display for GlobalPlace {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Place({})", self.label)
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct LocalPlace {
-    pub var: Var,
-    pub offset: u32,
-    pub layout: Layout,
-}
-
-impl LocalPlace {
-    pub fn new(var: Var, offset: u32, layout: Layout) -> Self {
-        Self {
-            var,
-            offset,
-            layout,
-        }
-    }
-
-    pub fn no_offset(var: Var, layout: Layout) -> Self {
-        Self {
-            var,
-            offset: 0,
-            layout,
-        }
-    }
-
-    pub fn into_place(self) -> Place {
-        Place::Local(self)
-    }
-}
-
-impl Display for LocalPlace {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Place(")?;
-        match self.offset {
-            0 => {
-                write!(f, "%{}", self.var.id)
-            }
-            _ => {
-                write!(f, "[%{} + {}]", self.var.id, self.offset)
-            }
-        }?;
-        write!(f, ")")
-    }
-}
-
-#[derive(Debug)]
-pub enum Value {
-    I64(i64),
-    Char(char),
-    Bool(bool),
-    Struct(Vec<Value>),
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum MIRType {
+    I64,
+    Bool,
+    Char,
+    Struct(Vec<MIRType>),
+    Ptr(Box<MIRType>),
     Void,
-    StoredAt(Place),
-    Ptr(Place),
 }
 
-impl Value {
-    pub fn cast_to(self, ty: &Type) -> Value {
-        unimplemented!()
-    }
-
-    pub fn into_place(self) -> Place {
-        match self {
-            Value::StoredAt(place) => {
-                place
+impl MIRType {
+    pub fn from_type(ty: &Type, global_scope: &GlobalScope) -> Self {
+        match ty {
+            Type::I64 => MIRType::I64,
+            Type::Bool => MIRType::Bool,
+            Type::Char => MIRType::Char,
+            Type::Void => MIRType::Void,
+            Type::Ptr(to, _) => MIRType::Ptr(Box::new(Self::from_type(to, global_scope))),
+            Type::Struct(id) => {
+                let struct_ = global_scope.get_struct(id);
+                let field_types = struct_.fields.iter()
+                    .map(|field| {
+                        let field = global_scope.get_field(field);
+                        Self::from_type(&field.ty, global_scope)
+                    })
+                    .collect();
+                MIRType::Struct(field_types)
             }
-            _ => {
-                panic!("Expected place, got {}", self)
+            Type::Function(_) => {
+                unimplemented!()
+            }
+            Type::Unresolved => {
+                unreachable!()
+            }
+
+            Type::Error => {
+                unreachable!()
             }
         }
     }
 
     pub fn layout(&self) -> Layout {
         match self {
-            Value::I64(_) => {
+            MIRType::I64 => {
                 Layout {
                     size: 8,
                     alignment: 8,
                 }
             }
-            Value::Char(_) => {
+            MIRType::Bool => {
                 Layout {
                     size: 1,
                     alignment: 1,
                 }
             }
-            Value::Bool(_) => {
+            MIRType::Char => {
                 Layout {
                     size: 1,
                     alignment: 1,
                 }
             }
-            Value::Struct(values) => {
-                let mut gt_alignment = 1;
+            MIRType::Struct(fields) => {
                 let mut size = 0;
-                for value in values {
-                    let layout = value.layout();
-                    size += layout.size;
-                    gt_alignment = gt_alignment.max(layout.alignment);
+                let mut alignment = 0;
+                for field in fields {
+                    let field_layout = field.layout();
+                    size += field_layout.size;
+                    alignment = std::cmp::max(alignment, field_layout.alignment);
                 }
                 Layout {
                     size,
-                    alignment: gt_alignment,
+                    alignment,
                 }
             }
-            Value::Void => {
+            MIRType::Ptr(_) => {
                 Layout {
-                    size: 0,
-                    alignment: 0,
+                    size: 8,
+                    alignment: 8,
                 }
             }
-            Value::StoredAt(place) => {
-                *place.layout()
-            }
-            Value::Ptr(_) => {
+            // todo
+            MIRType::Void => {
                 Layout {
-                    size: Layout::POINTER_SIZE,
-                    alignment: Layout::POINTER_SIZE,
+                    size: 8,
+                    alignment: 8,
                 }
+            }
+        }
+    }
+
+    pub fn deref_type(&self) -> Option<&MIRType> {
+        match self {
+            MIRType::Ptr(ty) => {
+                Some(ty)
+            }
+            _ => {
+                None
             }
         }
     }
 }
 
-impl Display for Value {
+impl Display for MIRType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Value(")?;
         match self {
-            Value::I64(value) => {
-                write!(f, "{}", value)
+            MIRType::I64 => {
+                write!(f, "i64")
             }
-            Value::Char(value) => {
-                write!(f, "'{}'", value)
+            MIRType::Bool => {
+                write!(f, "bool")
             }
-            Value::Bool(value) => {
-                write!(f, "{}", value)
+            MIRType::Char => {
+                write!(f, "char")
             }
-            Value::Struct(values) => {
-                write!(f, "{{")?;
-                for (i, value) in values.iter().enumerate() {
-                    if i != 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", value)?;
+            MIRType::Struct(fields) => {
+                write!(f, "struct {{ ")?;
+                for field in fields {
+                    write!(f, "{} ", field)?;
                 }
                 write!(f, "}}")
             }
-            Value::Void => {
-                write!(f, "()")
+            MIRType::Void => {
+                write!(f, "void")
             }
-            Value::Ptr(place) => {
-                write!(f, "Ptr {}", place)
+            MIRType::Ptr(ty) => {
+                write!(f, "*{}", ty)
             }
-            Value::StoredAt(place) => {
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Scalar {
+    pub data: u64,
+    pub size: u8,
+}
+
+impl Scalar {
+    pub fn new(data: u64, size: u8) -> Self {
+        Self {
+            data,
+            size,
+        }
+    }
+
+    pub fn from_i64(data: i64) -> Self {
+        Self {
+            data: data as u64,
+            size: 8,
+        }
+    }
+
+    pub fn from_char(data: char) -> Self {
+        Self {
+            data: u64::from(data as u8),
+            size: 1,
+        }
+    }
+
+    pub fn from_bool(data: bool) -> Self {
+        Self {
+            data: if data { 1 } else { 0 },
+            size: 1,
+        }
+    }
+
+    pub fn into_i8(&self) -> Option<i8> {
+        if self.size == 1 {
+            Some(self.data as i8)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_i16(&self) -> Option<i16> {
+        if self.size == 2 {
+            Some(self.data as i16)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_i32(&self) -> Option<i32> {
+        if self.size == 4 {
+            Some(self.data as i32)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_i64(&self) -> Option<i64> {
+        if self.size == 8 {
+            Some(self.data as i64)
+        } else {
+            None
+        }
+    }
+}
+
+impl Display for Scalar {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "0x{:x} => {{ size: {} }}", self.data, self.size)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ConstantValue {
+    Scalar(Scalar),
+    ZeroSized,
+}
+
+impl Display for ConstantValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstantValue::Scalar(scalar) => {
+                write!(f, "{}", scalar)
+            }
+            ConstantValue::ZeroSized => {
+                write!(f, "zero sized")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Operand {
+    Copy(Place),
+    Constant(ConstantValue),
+}
+
+impl Display for Operand {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Operand::Copy(place) => {
                 write!(f, "{}", place)
             }
-        }?;
-        write!(f, ")")
+            Operand::Constant(constant) => {
+                write!(f, "{}", constant)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Mutability {
+    Mutable,
+    Immutable,
+}
+
+impl Display for Mutability {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Mutability::Mutable => {
+                write!(f, "mut")
+            }
+            Mutability::Immutable => {
+                write!(f, "imut")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Leq,
+    Geq,
+}
+
+impl Display for BinOp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinOp::Add => {
+                write!(f, "+")
+            }
+            BinOp::Sub => {
+                write!(f, "-")
+            }
+            BinOp::Mul => {
+                write!(f, "*")
+            }
+            BinOp::Div => {
+                write!(f, "/")
+            }
+            BinOp::Mod => {
+                write!(f, "%")
+            }
+            BinOp::And => {
+                write!(f, "&")
+            }
+            BinOp::Or => {
+                write!(f, "|")
+            }
+            BinOp::Xor => {
+                write!(f, "^")
+            }
+            BinOp::Shl => {
+                write!(f, "<<")
+            }
+            BinOp::Shr => {
+                write!(f, ">>")
+            }
+            BinOp::Eq => {
+                write!(f, "==")
+            }
+            BinOp::Neq => {
+                write!(f, "!=")
+            }
+            BinOp::Lt => {
+                write!(f, "<")
+            }
+            BinOp::Gt => {
+                write!(f, ">")
+            }
+            BinOp::Leq => {
+                write!(f, "<=")
+            }
+            BinOp::Geq => {
+                write!(f, ">=")
+            }
+        }
+    }
+}
+
+
+#[derive(Debug, Clone)]
+pub enum UnOp {
+    Neg,
+    Not,
+}
+
+impl Display for UnOp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnOp::Neg => {
+                write!(f, "-")
+            }
+            UnOp::Not => {
+                write!(f, "!")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Rvalue {
+    AddressOf(Mutability, Place),
+    Use(Operand),
+    Struct(Vec<(FieldIdx, Operand)>),
+    BinaryOp(BinOp, (Operand, Operand)),
+    UnaryOp(UnOp, Operand),
+    Global(GlobalIdx),
+}
+
+impl Display for Rvalue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Rvalue::Struct(values) => {
+                write!(f, "{{")?;
+                for (i, (id, op)) in values.iter().enumerate() {
+                    if i != 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", id.as_idx(), op)?;
+                }
+                write!(f, "}}")
+            }
+            Rvalue::AddressOf(m, place) => {
+                write!(f, "&{} {}", m, place)
+            }
+            Rvalue::Use(op) => {
+                write!(f, "{}", op)
+            }
+            Rvalue::BinaryOp(op, (lhs, rhs)) => {
+                write!(f, "({} {} {})", lhs, op, rhs)
+            }
+            Rvalue::UnaryOp(op, operand) => {
+                write!(f, "({}{})", op, operand)
+            }
+            Rvalue::Global(idx) => {
+                write!(f, "{}", idx)
+            }
+        }
     }
 }
 
 #[derive(Debug)]
 pub enum InstructionKind {
-    Store { place: LocalPlace, value: Value },
-    Call { return_value_place: LocalPlace, function_id: FunctionId, args: Vec<LocalPlace> },
-    BinaryOp { operator: HIRBinaryOperator, lhs: Value, rhs: Value, result_place: LocalPlace },
-    UnaryOp { operator: HIRUnaryOperator, operand: Value, result_place: LocalPlace },
-    Move { to: LocalPlace, from: Place },
-    Deref { to: LocalPlace, from: Place },
-    Index { result_place: LocalPlace, base: Place, index: Place },
+    Assign { place: Place, value: Rvalue },
+    Call { return_value_place: Place, function_id: FunctionIdx, args: Vec<Operand> },
+    StorageLive { local: LocalIdx },
+    StorageDead { local: LocalIdx },
+    PlaceMention(Place),
 }
 
 #[derive(Debug)]
@@ -567,41 +812,43 @@ impl Terminator {
         }
     }
 
-    pub fn return_(span: TextSpan, return_value_place: LocalPlace) -> Self {
-        Self::new(TerminatorKind::Return(return_value_place), Some(span))
+    pub fn return_(span: TextSpan) -> Self {
+        Self::new(TerminatorKind::Return, Some(span))
     }
 
-    pub fn goto(label: Label) -> Self {
-        Self::new(TerminatorKind::Goto(label), None)
+    pub fn goto(bb: BasicBlockIdx) -> Self {
+        Self::new(TerminatorKind::Goto(bb), None)
     }
 
-    pub fn if_(span: TextSpan, condition: Place, then_label: Label, else_label: Label) -> Self {
+    pub fn if_(span: TextSpan, condition: Operand, then: BasicBlockIdx, else_: BasicBlockIdx) -> Self {
         Self::new(TerminatorKind::If {
             condition,
-            then: then_label,
-            else_: else_label,
+            then,
+            else_,
         }, Some(span))
     }
 }
 
 #[derive(Debug)]
 pub enum TerminatorKind {
-    Goto(Label),
-    If { condition: Place, then: Label, else_: Label },
-    Return(LocalPlace),
+    Goto(BasicBlockIdx),
+    If { condition: Operand, then: BasicBlockIdx, else_: BasicBlockIdx },
+    Return,
     Next,
 }
 
+idx!(BodyIdx);
+
 pub struct MIR {
-    pub bodies: Vec<Body>,
-    pub globals: Vec<(GlobalLabel, GlobalValue)>,
+    pub bodies: IdxVec<BodyIdx, Body>,
+    pub globals: IdxVec<GlobalIdx, Global>,
 }
 
 impl MIR {
     pub fn new() -> Self {
         Self {
-            bodies: Vec::new(),
-            globals: Vec::new(),
+            bodies: IdxVec::new(),
+            globals: IdxVec::new(),
         }
     }
 
@@ -617,31 +864,31 @@ impl MIR {
     pub fn graphviz(&self, scope: &GlobalScope) -> String {
         let mut s = String::new();
         s.push_str("digraph {\n");
-        for body in &self.bodies {
+        for body in self.bodies.iter() {
             let function = scope.get_function(&body.function);
-            s.push_str(&format!("  subgraph cluster_{} {{\n", body.function.index));
+            s.push_str(&format!("  subgraph cluster_{} {{\n", body.function.as_idx()));
             s.push_str(&format!("    label = \"{}\";\n", function.name));
-            for (index, bb) in body.basic_blocks.iter().enumerate() {
-                let mut instructions = format!("{}:\\n", bb.label);
+            for (index, bb) in body.basic_blocks.indexed_iter() {
+                let mut instructions = format!("{}:\\n", index);
                 instructions.push_str(bb.instructions.iter().map(|i| i.format(scope)).collect::<Vec<_>>().join("\\n").as_str());
                 match &bb.terminator.kind {
                     TerminatorKind::Goto(label) => {
-                        s.push_str(&format!("    {} -> {};\n", bb.label, label));
+                        s.push_str(&format!("    {} -> {};\n", index, label));
                     }
                     TerminatorKind::If { condition: cond, then: then_label, else_: else_label } => {
                         // create a branch block
-                        instructions.push_str(format!("\\nif {} then goto {} else goto {}", cond, then_label, else_label).as_str());
-                        s.push_str(&format!("    {} -> {};\n", bb.label, then_label));
-                        s.push_str(&format!("    {} -> {};\n", bb.label, else_label));
+                        instructions.push_str(format!("\\nif {} then goto bb{} else goto bb{}", cond, then_label, else_label).as_str());
+                        s.push_str(&format!("    {} -> {};\n", index, then_label));
+                        s.push_str(&format!("    {} -> {};\n", index, else_label));
                     }
-                    TerminatorKind::Return(place) => {
-                        instructions.push_str(format!("\\nreturn {}", place).as_str());
+                    TerminatorKind::Return => {
+                        instructions.push_str(format!("\\nreturn").as_str());
                     }
                     TerminatorKind::Next => {
-                        s.push_str(&format!("    {} -> {};\n", bb.label, body.basic_blocks[index + 1].label));
+                        s.push_str(&format!("    {} -> {};\n", index, index.add(1)));
                     }
                 }
-                s.push_str(&format!("    {} [label=\"{}\"];\n", bb.label, instructions));
+                s.push_str(&format!("    {} [label=\"{}\"];\n", index, instructions));
             }
             s.push_str("  }\n");
         }
@@ -656,16 +903,16 @@ impl MIR {
 
     pub fn output(&self, scope: &GlobalScope) -> String {
         let mut s = String::new();
-        for body in &self.bodies {
+        for (idx, global) in self.globals.indexed_iter() {
+            s.push_str(&format!("{}@{} = {};\n", idx, global.ty, global.value));
+        }
+        for body in self.bodies.iter() {
             let function = scope.get_function(&body.function);
             s.push_str(&format!("{}:\n", function.name));
-            for id in body.scope.locals.iter() {
-                let local = scope.get_variable(id);
-                let place = body.scope.get_variable(id).unwrap();
-                s.push_str(&format!("  {} = let {}: {}\n", place, local.name, local.ty));
-            }
-            for bb in &body.basic_blocks {
-                s.push_str(&format!("  {}:\n", bb.label));
+            let scope_string = self.format_scopes(&body);
+            s.push_str(&format!("{}\n", scope_string));
+            for (index, bb) in body.basic_blocks.indexed_iter() {
+                s.push_str(&format!("  {}:\n", index));
                 for instruction in &bb.instructions {
                     s.push_str(&format!("    {}\n", instruction.format(scope)));
                 }
@@ -676,14 +923,43 @@ impl MIR {
                     TerminatorKind::If { condition: cond, then: then_label, else_: else_label } => {
                         s.push_str(&format!("    if {} then goto {} else goto {}\n", cond, then_label, else_label));
                     }
-                    TerminatorKind::Return(place) => {
-                        s.push_str(&format!("    return {}\n", place));
+                    TerminatorKind::Return => {
+                        s.push_str(&format!("    return\n"));
                     }
                     TerminatorKind::Next => {}
                 }
             }
         }
         s
+    }
+
+    fn format_scopes(&self, body: &Body) -> String {
+        let mut s = String::new();
+        self.format_scope(&mut s, &body.scope, LocalScopeIdx::new(0), 2);
+        s
+    }
+
+    fn format_scope(&self, s: &mut String, scope: &BodyScope, local_scope_idx: LocalScopeIdx, indent: usize) {
+        let local_scope = scope.scopes.get(local_scope_idx);
+        s.push_str(&format!("{}{} {{\n", "  ".repeat(indent), local_scope_idx));
+        for id in local_scope.locals.iter() {
+            let local = scope.locals.get(*id);
+            s.push_str(&format!("{}", "  ".repeat(indent + 1)));
+            match local.variable_idx.as_ref() {
+                None => {
+                    s.push_str(&format!("  {} = let {}\n", id, local.ty));
+                }
+                Some(variable_idx) => {
+                    let scope = scope.scope.borrow();
+                    let var = scope.get_variable(variable_idx);
+                    s.push_str(&format!("  {} = let {}: {}\n", id, var.name, var.ty));
+                }
+            }
+        }
+        for child in local_scope.children.iter() {
+            self.format_scope(s, scope, *child, indent + 1);
+        }
+        s.push_str(&format!("{}}}\n", "  ".repeat(indent)));
     }
 
     pub fn interpret(&self, scope: &GlobalScope) {
@@ -696,7 +972,6 @@ pub struct MIRGen {
     pub ir: MIR,
     pub scope: GlobalScopeCell,
     diagnostics: DiagnosticsBagCell,
-    label_generator: Rc<RefCell<LabelGenerator>>,
     global_scope: Rc<RefCell<GlobalMIRScope>>,
 }
 
@@ -709,7 +984,6 @@ impl MIRGen {
             ir: MIR::new(),
             diagnostics,
             scope,
-            label_generator: Rc::new(RefCell::new(LabelGenerator::new())),
             global_scope: Rc::new(RefCell::new(GlobalMIRScope::new())),
         }
     }
@@ -718,9 +992,7 @@ impl MIRGen {
         self.construct_globals(hir);
         self.construct_functions(hir);
         let globals = &self.global_scope.borrow().globals;
-        self.ir.globals = globals.iter().map(|(id, global)| {
-            (id.clone(), global.clone())
-        }).collect();
+        self.ir.globals = globals.clone();
         self.ir
     }
 
@@ -730,46 +1002,26 @@ impl MIRGen {
 
     fn construct_functions(&mut self, hir: &HIR) {
         let scope = &self.scope.borrow();
-        self.ir.bodies = hir.functions(
-            scope,
-        ).iter().map(|(function, body)| {
+        for (function_idx, body) in hir.function_bodies.iter() {
+            let function = scope.get_function(function_idx);
             if function.is_extern() {
-                return None;
+                continue;
             }
-            Some(self.construct_function(function, *body))
-        }).flatten().collect();
+            self.ir.bodies.push(self.construct_function(*function_idx, body));
+        }
     }
 
-    pub fn construct_function(&self, function: &Function, statements: Option<&Vec<HIRStatement>>) -> Body {
-        let body = Body::new(function.id, self.label_generator.clone(), self.scope.clone());
+    pub fn construct_function(&self, function: FunctionIdx, statements: &Vec<HIRStatement>) -> Body {
+        let body = Body::new(function, self.scope.clone());
 
-        let mut body = match statements {
-            None => {
-                body
-            }
-            Some(statements) => {
-                let body_gen = BodyGen::new(body, self.scope.clone(), self.global_scope.clone());
-                body_gen.gen(statements)
-            }
-        };
-        let bb = body.basic_blocks.last_mut();
-        if let Some(bb) = bb {
-            if let TerminatorKind::Next = bb.terminator.kind {
-                let place = body.scope.new_local_place(Value::Void.layout());
-                bb.terminator = Terminator {
-                    span: None,
-                    kind: TerminatorKind::Return(place),
-                };
-            }
-        }
-        body
+        let body_gen = BodyGen::new(body, self.scope.clone(), self.global_scope.clone());
+        body_gen.gen(statements)
     }
 }
 
 pub struct BodyGen {
     pub body: Body,
-    pub basic_blocks: Vec<BasicBlock>,
-    pub current_block: usize,
+    pub current_block: BasicBlockIdx,
     pub scope: GlobalScopeCell,
     pub global_scope: Rc<RefCell<GlobalMIRScope>>,
 }
@@ -778,26 +1030,30 @@ impl BodyGen {
     pub fn new(mut body: Body, scope: GlobalScopeCell,
                global_scope: Rc<RefCell<GlobalMIRScope>>,
     ) -> Self {
+        let idx = body.basic_blocks.push(BasicBlock::new());
         Self {
-            basic_blocks: vec![
-                BasicBlock::new(body.new_basic_block()),
-            ],
             body,
-            current_block: 0,
+            current_block: idx,
             scope,
             global_scope,
         }
     }
 
     fn gen(mut self, statements: &Vec<HIRStatement>) -> Body {
-        let scope = self.scope.borrow();
-        let function = scope.get_function(&self.body.function);
-        for param_id in function.parameters.iter() {
-            self.body.parameters.push(self.body.scope.new_mapped_variable(param_id));
+        for arg_idx in 1..self.body.scope.arg_count + 1 {
+            self.start_var_lifetime(LocalIdx::new(arg_idx));
         }
-        drop(scope);
         self.gen_stmts(statements);
-        self.body.basic_blocks = self.basic_blocks;
+        let last_term = self.body.basic_blocks.last().map(|bb| &bb.terminator.kind);
+        if let Some(last_term) = last_term {
+            if let TerminatorKind::Next = last_term {
+                self.body.basic_blocks.last_mut().unwrap().terminator = Terminator {
+                    span: None,
+                    kind: TerminatorKind::Return,
+                };
+            }
+        }
+        self.exit_scope();
         self.body
     }
 
@@ -811,73 +1067,79 @@ impl BodyGen {
         match &stmt.kind {
             HIRStatementKind::VariableDeclaration(variable_declaration) => {
                 let expr = &variable_declaration.initializer;
-                let var_place = self.body.scope.new_mapped_variable(&variable_declaration.variable_id);
-                self.gen_expr(&expr, Some(&var_place));
+                let var_place = self.get_place_for_variable(&variable_declaration.variable_id);
+                let value = self.gen_as_rvalue(expr);
+                self.push_instruction(Instruction {
+                    span: stmt.span.clone(),
+                    kind: InstructionKind::Assign {
+                        value,
+                        place: var_place,
+                    },
+                })
             }
             HIRStatementKind::Expression(expr) => {
-                let value_place = self.body.scope.new_local_place(expr.expression.ty.layout(
-                    &self.scope.borrow(),
-                ));
-                self.gen_expr(&expr.expression, Some(&value_place));
+                let place = self.gen_as_place(&expr.expression);
+                self.push_instruction(Instruction {
+                    span: stmt.span.clone(),
+                    kind: InstructionKind::PlaceMention(place),
+                })
             }
             HIRStatementKind::If(if_stmt) => {
-                let condition = self.body.scope.new_local_place(Type::Bool.layout(
-                    &self.scope.borrow(),
-                ));
-                self.gen_expr(&if_stmt.condition, Some(&condition));
-                self.body.scope.enter_scope();
+                let cond_value = self.gen_as_operand(&if_stmt.condition);
+                self.enter_scope();
                 let current_block = self.current_block;
                 let then_block = self.push_basic_block();
                 let else_block = if_stmt.else_.as_ref().map(|_| self.push_basic_block());
                 let end_block = self.push_basic_block();
                 self.set_current_block(current_block);
-                let terminator = Terminator::if_(stmt.span.clone(), condition.into_place(), then_block, else_block.clone().unwrap_or(end_block));
+                let terminator = Terminator::if_(stmt.span.clone(), cond_value, then_block, else_block.clone().unwrap_or(end_block));
                 self.push_terminator_no_block(terminator);
-                self.set_current_block_by_label(&then_block);
+                self.set_current_block(then_block);
                 self.gen_stmts(&if_stmt.then);
+                self.exit_scope();
                 if let Some(else_block) = else_block {
-                    self.set_current_block_by_label(&else_block);
+                    self.enter_scope();
+                    self.set_current_block(else_block);
                     self.gen_stmts(&if_stmt.else_.as_ref().unwrap());
+                    self.exit_scope();
                 }
-                self.body.scope.exit_scope();
-                self.set_current_block_by_label(&end_block);
+                self.set_current_block(end_block);
             }
             HIRStatementKind::Block(stmt) => {
-                let current_block = self.current_block;
-                self.push_basic_block();
-                self.body.scope.enter_scope();
+                self.enter_scope();
                 self.gen_stmts(&stmt.statements);
-                self.body.scope.exit_scope();
-                self.set_current_block(current_block);
+                self.exit_scope();
             }
             HIRStatementKind::While(while_stmt) => {
                 let condition_block = self.push_basic_block();
                 let body_block = self.push_basic_block();
                 let end_block = self.push_basic_block();
-                self.set_current_block_by_label(&condition_block);
-                let condition = self.body.scope.new_local_place(Type::Bool.layout(
-                    &self.scope.borrow(),
-                ));
-                self.gen_expr(&while_stmt.condition, Some(&condition));
-                let terminator = Terminator::if_(stmt.span.clone(), condition.into_place(), body_block, end_block);
+                self.set_current_block(condition_block);
+                let condition = self.gen_as_operand(&while_stmt.condition);
+                let terminator = Terminator::if_(stmt.span.clone(), condition, body_block, end_block);
                 self.push_terminator(terminator);
-                self.set_current_block_by_label(&body_block);
-                self.body.scope.enter_scope();
+                self.set_current_block(body_block);
+                self.enter_scope();
                 self.gen_stmts(&while_stmt.body);
-                self.body.scope.exit_scope();
+                self.exit_scope();
                 let terminator = Terminator::goto(condition_block);
                 self.push_terminator(terminator);
-                self.set_current_block_by_label(&end_block);
+                self.set_current_block(end_block);
             }
 
             HIRStatementKind::Return(return_stmt) => {
-                let place = self.body.scope.new_local_place(return_stmt.expression.ty.layout(
-                    &self.scope.borrow(),
-                ));
-                self.gen_expr(&return_stmt.expression, Some(&place));
-                // todo: develop a calling convention
-                let terminator = Terminator::return_(stmt.span.clone(), place);
-                if self.body.scope.nesting_level == 0 {
+                let return_place = self.body.scope.return_place();
+                self.start_var_lifetime(return_place.local);
+                let value = self.gen_as_rvalue(&return_stmt.expression);
+                self.push_instruction(Instruction {
+                    span: stmt.span.clone(),
+                    kind: InstructionKind::Assign {
+                        value,
+                        place: return_place,
+                    },
+                });
+                let terminator = Terminator::return_(stmt.span.clone());
+                if self.body.scope.scope_stack.len() == 1 {
                     self.push_terminator_no_block(terminator);
                 } else {
                     self.push_terminator(terminator);
@@ -886,291 +1148,218 @@ impl BodyGen {
         }
     }
 
-    fn gen_expr(&mut self, expr: &HIRExpression, store_at: Option<&LocalPlace>) -> Value {
+    pub fn gen_as_operand(&mut self, expr: &HIRExpression) -> Operand {
+        let category = Category::from_expr_kind(&expr.kind);
+        match category {
+            Category::RValue | Category::Place => {
+                Operand::Copy(self.gen_as_temp(expr))
+            }
+            Category::Constant => {
+                Operand::Constant(self.gen_as_constant(expr))
+            }
+        }
+    }
+
+
+    pub fn gen_as_constant(&self, expr: &HIRExpression) -> ConstantValue {
         match &expr.kind {
-            HIRExpressionKind::Literal(literal_expr) => {
-                let value = match &literal_expr.value {
-                    HIRLiteralValue::Integer(int) => {
-                        Value::I64(*int)
-                    }
-                    HIRLiteralValue::Boolean(bool) => {
-                        Value::Bool(*bool)
-                    }
-                    HIRLiteralValue::String(string) => {
-                        let global_place = self.global_scope.borrow_mut().add_global_string(string.clone());
-                        Value::Ptr(global_place.into_place())
-                    }
-                    HIRLiteralValue::Char(char) => {
-                        Value::Char(*char)
-                    }
-                };
-                if let Some(place) = store_at {
-                    let instruction = Instruction {
-                        kind: InstructionKind::Store {
-                            value,
-                            place: *place,
-                        },
-                        span: expr.span.clone(),
-                    };
-                    self.push_instruction(instruction);
-                    return Value::StoredAt(place.into_place());
+            HIRExpressionKind::Literal(lit_expr) => {
+                match &lit_expr.value {
+                    HIRLiteralValue::Integer(value) =>
+                        ConstantValue::Scalar(Scalar::from_i64(*value)),
+
+                    HIRLiteralValue::Boolean(value) =>
+                        ConstantValue::Scalar(Scalar::from_bool(*value)),
+                    HIRLiteralValue::String(_) =>
+                        unreachable!("String literal should be lowered to a global variable and be used through Rvalue::Global"),
+                    HIRLiteralValue::Char(value) =>
+                        ConstantValue::Scalar(Scalar::from_char(*value)),
                 }
-                value
             }
-            HIRExpressionKind::Binary(bin_expr) => {
-                let left = self.gen_expr(&bin_expr.left, None);
-                let right = self.gen_expr(&bin_expr.right, None);
-                let result_place = (store_at.copied()).unwrap_or(self.body.scope.new_local_place(
-                    expr.ty.layout(self.scope.borrow().deref()),
-                ));
-                let bin_op = Instruction {
-                    kind: InstructionKind::BinaryOp {
-                        operator: bin_expr.op.clone(),
-                        lhs: left,
-                        rhs: right,
-                        result_place,
-                    },
-                    span: expr.span.clone(),
-                };
-                self.push_instruction(bin_op);
-                Value::StoredAt(result_place.into_place())
+            _ => {
+                panic!("Not a constant expression")
             }
-            HIRExpressionKind::Unary(un_op) => {
-                let value = self.gen_expr(&un_op.operand, None);
-                let result_place = (store_at.copied()).unwrap_or(self.body.scope.new_local_place(
-                    expr.ty.layout(self.scope.borrow().deref()),
-                ));
-                let unary_op = Instruction {
-                    kind: InstructionKind::UnaryOp {
-                        operator: un_op.op.clone(),
-                        operand: value,
-                        result_place,
-                    },
-                    span: expr.span.clone(),
-                };
-                self.push_instruction(unary_op);
-                Value::StoredAt(result_place.into_place())
+        }
+    }
+
+    pub fn gen_as_temp(&mut self, expr: &HIRExpression) -> Place {
+        let category = Category::from_expr_kind(&expr.kind);
+        match category {
+            Category::Place => self.gen_as_place(expr),
+            Category::Constant |
+            Category::RValue => {
+                let mut temp = self.new_temp_place(&expr.ty);
+                self.gen_expr_into(expr, &mut temp);
+                temp
             }
-            HIRExpressionKind::Parenthesized(expr) => {
-                self.gen_expr(&expr.expression, store_at)
-            }
-            HIRExpressionKind::Assignment(a_expr) => {
-                let place = match &a_expr.target.kind {
-                    HIRAssignmentTargetKind::Variable(var_id) => {
-                        self.body.scope.get_variable(var_id).unwrap()
+        }
+    }
+
+    pub fn gen_as_place(&mut self, expr: &HIRExpression) -> Place {
+        let category = Category::from_expr_kind(&expr.kind);
+        match category {
+            Category::Place => {
+                match &expr.kind {
+                    HIRExpressionKind::Variable(var_expr) => {
+                        let local = self.body.scope.get_variable(&var_expr.variable_id).unwrap();
+                        Place {
+                            local: *local,
+                            projection: None,
+                        }
                     }
-                    HIRAssignmentTargetKind::Deref(expr) => {
-                        unimplemented!()
+                    HIRExpressionKind::Call(_) |
+
+
+                    HIRExpressionKind::FieldAccess(_) |
+                    HIRExpressionKind::Ref(_) |
+                    HIRExpressionKind::Deref(_) |
+                    HIRExpressionKind::Index(_) => {
+                        let mut place = self.new_temp_place(&expr.ty);
+                        self.gen_expr_into(expr, &mut place);
+                        place
                     }
-                    HIRAssignmentTargetKind::Error => {
-                        unreachable!()
+                    _ => {
+                        panic!("Cannot use expression as place")
                     }
-                    HIRAssignmentTargetKind::Field(id, target) => {
-                        let value = self.gen_expr(target, None).into_place().into_local();
-                        let offset = self.scope.borrow().get_field_offset(id);
-                        let field_layout = self.scope.borrow().get_field(id).ty.layout(&self.scope.borrow());
-                        LocalPlace::new(value.var, offset, field_layout)
-                    }
-                };
-                self.gen_expr(&a_expr.value, Some(&place));
-                let place = place.into_place();
-                if let Some(store_at) = store_at {
-                    let instruction = Instruction {
-                        kind: InstructionKind::Move {
-                            from: place,
-                            to: store_at.clone(),
-                        },
-                        span: expr.span.clone(),
-                    };
-                    self.push_instruction(instruction);
                 }
-                Value::StoredAt(place)
+            }
+            Category::Constant => panic!("Cannot use constant as place"),
+            Category::RValue => {
+                self.gen_as_temp(expr)
+            }
+        }
+    }
+
+    pub fn gen_expr_into(&mut self, expr: &HIRExpression, place: &mut Place) {
+        match &expr.kind {
+            HIRExpressionKind::FieldAccess(field_access_expr) => {
+                let mut base = self.gen_as_place(&field_access_expr.target);
+                base.projection = Some(Projection::Field(field_access_expr.field_id));
+                *place = base;
+            }
+            HIRExpressionKind::Deref(deref_expr) => {
+                let mut base = self.gen_as_place(&deref_expr.target);
+                base.projection = Some(Projection::Deref);
+                *place = base;
+            }
+            HIRExpressionKind::Index(index_expr) => {
+                let base = self.gen_as_place(&index_expr.target);
+                let index = self.gen_as_place(&index_expr.index);
+                let projection = Projection::Index(index.local);
+                *place = Place {
+                    local: base.local,
+                    projection: Some(projection),
+                };
             }
             HIRExpressionKind::Call(call_expr) => {
                 let function_id = match &call_expr.callee {
-                    HIRCallee::Function(id) => {
-                        *id
-                    }
-                    HIRCallee::Undeclared(_) => {
-                        unreachable!()
-                    }
-                    HIRCallee::Invalid => { unreachable!() }
+                    HIRCallee::Function(function_id) => *function_id,
+                    _ => panic!("Cannot call non-function"),
                 };
-                let mut args = Vec::new();
-                for arg in &call_expr.arguments {
-                    let arg_place = self.body.scope.new_local_place(arg.ty.layout(&self.scope.borrow()));
-                    self.gen_expr(arg, Some(&arg_place));
-                    args.push(
-                        arg_place
-                    );
-                }
-
-                let return_value_place = (store_at.copied()).unwrap_or(self.body.scope.new_local_place(
-                    expr.ty.layout(self.scope.borrow().deref()),
-                ));
-                let call_instr = Instruction {
-                    kind: InstructionKind::Call {
-                        return_value_place,
-                        function_id,
-                        args,
-                    },
-                    span: expr.span.clone(),
-                };
-
-                self.push_instruction(call_instr);
-                Value::StoredAt(return_value_place.into_place())
-            }
-            HIRExpressionKind::FieldAccess(member_expr) => {
-                let primary = self.gen_expr(&member_expr.target, None);
-                let object_place = primary.into_place().into_local();
-                let offset = self.scope.borrow().get_field_offset(&member_expr.field_id);
-                let field_layout = self.scope.borrow().get_field(&member_expr.field_id).ty.layout(&self.scope.borrow());
-                let field_place = LocalPlace::new(object_place.var, offset, field_layout).into_place();
-                if let Some(store_at) = store_at {
-                    let instruction = Instruction {
-                        kind: InstructionKind::Move {
-                            from: field_place,
-                            to: store_at.clone(),
+                let args = call_expr.args.iter().map(|arg| self.gen_as_operand(arg)).collect();
+                self.push_instruction(
+                    Instruction {
+                        kind: InstructionKind::Call {
+                            function_id,
+                            args,
+                            return_value_place: place.clone(),
                         },
                         span: expr.span.clone(),
-                    };
-                    self.push_instruction(instruction);
-                    return Value::StoredAt(store_at.into_place());
-                }
-                Value::StoredAt(field_place)
-            }
-
-            HIRExpressionKind::Variable(var_expr) => {
-                let place = self.body.scope.get_variable(&var_expr.variable_id).unwrap().into_place();
-                // todo: reduce duplication
-                if let Some(store_at) = store_at {
-                    let instruction = Instruction {
-                        kind: InstructionKind::Move {
-                            from: place,
-                            to: store_at.clone(),
-                        },
-                        span: expr.span.clone(),
-                    };
-                    self.push_instruction(instruction);
-                    return Value::StoredAt(store_at.into_place());
-                }
-                Value::StoredAt(place)
-            }
-            HIRExpressionKind::Void => {
-                Value::Void
-            }
-            HIRExpressionKind::Ref(ref_expr) => {
-                let place_of_value = self.gen_expr_as_place(&ref_expr.expression);
-                let place = (store_at.copied()).unwrap_or(self.body.scope.new_local_place(
-                    expr.ty.layout(self.scope.borrow().deref()),
-                ));
-                let instruction = Instruction {
-                    kind: InstructionKind::Store {
-                        place,
-                        value: Value::Ptr(place_of_value),
-                    },
-                    span: expr.span.clone(),
-                };
-                self.push_instruction(instruction);
-                Value::StoredAt(place.into_place())
-            }
-            HIRExpressionKind::Deref(deref_expr) => {
-                let primary = self.gen_expr(&deref_expr.expression, None);
-                // todo: we should ont move the place here but the value that is stored in the place
-                let from = primary.into_place();
-                let to = (store_at.copied()).unwrap_or(self.body.scope.new_local_place(
-                    expr.ty.layout(self.scope.borrow().deref()),
-                ));
-                let load = Instruction {
-                    kind: InstructionKind::Deref { to, from },
-                    span: expr.span.clone(),
-                };
-                self.push_instruction(load);
-                Value::StoredAt(to.into_place())
-            }
-            HIRExpressionKind::Cast(cast_expr) => {
-                self.gen_expr(&cast_expr.expression, store_at).cast_to(&cast_expr.ty)
-            }
-            HIRExpressionKind::StructInit(struct_init_expr) => {
-                let value = Value::Struct(
-                    struct_init_expr.fields.iter().map(|field| self.gen_expr(&field.value, None)).collect()
+                    }
                 );
-                match store_at {
-                    Some(store_at) => {
-                        let instruction = Instruction {
-                            kind: InstructionKind::Store {
-                                place: *store_at,
-                                value,
-                            },
-                            span: expr.span.clone(),
-                        };
-                        self.push_instruction(instruction);
-                        Value::StoredAt(store_at.into_place())
-                    }
-                    None => {
-                        value
-                    }
-                }
             }
-            HIRExpressionKind::Index(index_expr) => {
-                let target = self.gen_expr(&index_expr.target, None);
-                let index_place = self.gen_expr_as_place(&index_expr.index);
-                let base_place = target.into_place();
-                let place = (store_at.copied()).unwrap_or(self.body.scope.new_local_place(
-                    expr.ty.layout(&self.scope.borrow()),
-                ));
-                let instruction = Instruction {
-                    kind: InstructionKind::Index {
-                        result_place: place,
-                        base: base_place,
-                        index: index_place,
-                    },
+            _ => {
+                let rvalue = self.gen_as_rvalue(expr);
+                self.push_instruction(Instruction {
                     span: expr.span.clone(),
-                };
-                self.push_instruction(instruction);
-                Value::StoredAt(place.into_place())
+                    kind: InstructionKind::Assign {
+                        value: rvalue,
+                        place: place.clone(),
+                    },
+                });
             }
         }
     }
 
-    pub fn gen_expr_as_place(&mut self, expr: &HIRExpression) -> Place {
-        let value = self.gen_expr(expr, None);
-        match value {
-            Value::StoredAt(place) => place,
-            _ => {
-                let place = self.body.scope.new_local_place(
-                    expr.ty.layout(self.scope.borrow().deref())
-                );
-                let instruction = Instruction {
-                    kind: InstructionKind::Store {
-                        place,
+    pub fn gen_as_rvalue(&mut self, expr: &HIRExpression) -> Rvalue {
+        match &expr.kind {
+            HIRExpressionKind::Assignment(assign_expr) => {
+                let place = self.gen_as_place(&assign_expr.target);
+                let value = self.gen_as_rvalue(&assign_expr.value);
+                self.push_instruction(Instruction {
+                    span: expr.span.clone(),
+                    kind: InstructionKind::Assign {
+                        place: place.clone(),
                         value,
                     },
-                    span: expr.span.clone(),
-                };
-                self.push_instruction(instruction);
-                place.into_place()
+                });
+                Rvalue::Use(Operand::Copy(place))
             }
+            HIRExpressionKind::Binary(bin_expr) => {
+                let left = self.gen_as_operand(&bin_expr.left);
+                let right = self.gen_as_operand(&bin_expr.right);
+                let op = match bin_expr.op {
+                    HIRBinaryOperator::Add => BinOp::Add,
+                    HIRBinaryOperator::Subtract => BinOp::Sub,
+                    HIRBinaryOperator::Multiply => BinOp::Mul,
+                    HIRBinaryOperator::Divide => BinOp::Div,
+                    HIRBinaryOperator::Modulo => BinOp::Mod,
+                    HIRBinaryOperator::BitwiseAnd => BinOp::And,
+                    HIRBinaryOperator::BitwiseOr => BinOp::Or,
+                    HIRBinaryOperator::BitwiseXor => BinOp::Xor,
+                    HIRBinaryOperator::Equals => BinOp::Eq,
+                    HIRBinaryOperator::NotEquals => BinOp::Neq,
+                    HIRBinaryOperator::LessThan => BinOp::Lt,
+                    HIRBinaryOperator::LessThanOrEqual => BinOp::Leq,
+                    HIRBinaryOperator::GreaterThan => BinOp::Gt,
+                    HIRBinaryOperator::GreaterThanOrEqual => BinOp::Geq,
+                    HIRBinaryOperator::LogicalAnd => BinOp::And,
+                };
+                Rvalue::BinaryOp(op, (left, right))
+            }
+            HIRExpressionKind::Unary(un_expr) => {
+                let operand = self.gen_as_operand(&un_expr.operand);
+                let op = match un_expr.op {
+                    HIRUnaryOperator::Negate => UnOp::Neg,
+                    HIRUnaryOperator::BitwiseNot => UnOp::Not,
+                };
+                Rvalue::UnaryOp(op, operand)
+            }
+            HIRExpressionKind::StructInit(struct_init_expr) => {
+                let mut fields = vec![];
+                for field in &struct_init_expr.fields {
+                    fields.push((field.field_id, self.gen_as_operand(&field.value)));
+                }
+                Rvalue::Struct(fields)
+            }
+            HIRExpressionKind::Ref(_) => {
+                Rvalue::AddressOf(Mutability::Immutable, self.gen_as_place(expr))
+            }
+            HIRExpressionKind::Cast(_) => {
+                unimplemented!("Cast")
+            }
+            HIRExpressionKind::Literal(
+            HIRLiteralExpression {
+                value: HIRLiteralValue::String(value),
+                ..
+            },
+            ) => {
+                Rvalue::Global(self.global_scope.borrow_mut().add_global_string(value.clone()))
+            }
+            _ => Rvalue::Use(self.gen_as_operand(expr)),
         }
     }
 
-    pub fn push_basic_block(&mut self) -> Label {
-        let label = self.body.new_basic_block();
-        self.basic_blocks.push(BasicBlock::new(label.clone()));
-        label
+    pub fn push_basic_block(&mut self) -> BasicBlockIdx {
+        self.body.basic_blocks.push(BasicBlock::new())
     }
 
     pub fn current_block(&mut self) -> &mut BasicBlock {
-        self.basic_blocks.get_mut(self.current_block).expect("Current block is out of bounds")
+        self.body.basic_blocks.get_mut(self.current_block)
     }
 
-    pub fn set_current_block(&mut self, index: usize) {
-        self.current_block = index;
-    }
-
-    pub fn set_current_block_by_label(&mut self, label: &Label) {
-        let index = self.basic_blocks.iter().position(|bb| &bb.label == label).expect("Block not found");
-        self.set_current_block(index);
+    pub fn set_current_block(&mut self, basic_block: BasicBlockIdx) {
+        self.current_block = basic_block;
     }
 
     pub fn push_instruction(&mut self, instruction: Instruction) {
@@ -1186,6 +1375,88 @@ impl BodyGen {
     #[inline]
     pub fn push_terminator_no_block(&mut self, terminator: Terminator) {
         self.current_block().terminator = terminator;
+    }
+
+    fn enter_scope(&mut self) {
+        self.body.scope.enter_scope();
+    }
+
+    fn exit_scope(&mut self) {
+        let current_scope = self.body.scope.current_scope();
+        for local in current_scope.locals.clone().into_iter() {
+            self.end_var_lifetime(local);
+        }
+        self.body.scope.exit_scope();
+    }
+
+    fn new_temp_place(&mut self, ty: &Type) -> Place {
+        let local = self.body.scope.new_local(ty);
+        self.start_var_lifetime(local);
+        Place {
+            local,
+            projection: None,
+        }
+    }
+
+    fn get_place_for_variable(&mut self, variable: &VariableIdx) -> Place {
+        let local = self.body.scope.new_mapped_local(variable);
+        self.start_var_lifetime(local);
+        Place {
+            local,
+            projection: None,
+        }
+    }
+
+    fn start_var_lifetime(&mut self, local: LocalIdx) {
+        self.push_instruction(Instruction {
+            kind: InstructionKind::StorageLive {
+                local,
+            },
+            span: TextSpan::new(0, 0, "".into()),
+        });
+    }
+
+    fn end_var_lifetime(&mut self, local: LocalIdx) {
+        if local == Place::RETURN_PLACE {
+            return;
+        }
+        self.push_instruction(Instruction {
+            kind: InstructionKind::StorageDead {
+                local,
+            },
+            span: TextSpan::new(0, 0, "".into()),
+        });
+    }
+}
+
+pub enum Category {
+    Place,
+    Constant,
+    RValue,
+}
+
+impl Category {
+    pub fn from_expr_kind(expr: &HIRExpressionKind) -> Self {
+        match expr {
+            HIRExpressionKind::Literal(literal) => {
+                match &literal.value {
+                    HIRLiteralValue::String(_) => Category::RValue,
+                    _ => Category::Constant,
+                }
+            }
+            HIRExpressionKind::Void => Category::Constant,
+            HIRExpressionKind::Variable(_) |
+            HIRExpressionKind::FieldAccess(_) |
+            HIRExpressionKind::Index(_) |
+            HIRExpressionKind::Deref(_) => Category::Place,
+            HIRExpressionKind::Unary(_) |
+            HIRExpressionKind::Binary(_) |
+            HIRExpressionKind::Call(_) |
+            HIRExpressionKind::Cast(_) |
+            HIRExpressionKind::StructInit(_) |
+            HIRExpressionKind::Assignment(_) |
+            HIRExpressionKind::Ref(_) => Category::RValue,
+        }
     }
 }
 

@@ -3,6 +3,7 @@ use std::cell::Cell;
 use crate::ast::{Ast, ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTFunctionReturnType, ASTStatement, ASTString, ASTStructField, ASTStructInitField, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, EscapedCharacter, FuncDeclParameter, NormalFuncDeclParameter, PtrSyntax, QualifiedIdentifier, StaticTypeAnnotation, StringPart, TypeSyntax};
 use crate::ast::lexer::{Lexer, Token, TokenKind};
 use crate::diagnostics::DiagnosticsBagCell;
+use crate::modules::scopes::GlobalScopeCell;
 
 #[derive(Debug, Clone)]
 pub struct Counter {
@@ -33,16 +34,19 @@ pub struct Parser<'a> {
     ast: &'a mut Ast,
     is_parsing_condition: bool,
     encountered_module_declarations: Vec<Token>,
+    global_scope: GlobalScopeCell,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(
         tokens: Vec<Token>,
         diagnostics_bag: DiagnosticsBagCell,
+        global_scope: GlobalScopeCell,
         ast: &'a mut Ast,
     ) -> Self {
         Self {
             tokens,
+            global_scope,
             current: Counter::new(),
             diagnostics_bag,
             ast,
@@ -122,7 +126,12 @@ impl<'a> Parser<'a> {
     fn parse_struct_declaration(&mut self) -> ASTStatement {
         let struct_token = self.consume_and_check(TokenKind::Struct).clone();
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
-        self.ast.structs.push(identifier.clone());
+        let id = self.global_scope.borrow_mut().declare_struct(identifier.clone());
+        if id.is_err() {
+            self.diagnostics_bag.borrow_mut().report_struct_already_declared(
+                &identifier,
+            );
+        }
         let mut fields = Vec::new();
         let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
         while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
@@ -441,6 +450,9 @@ impl<'a> Parser<'a> {
                 Some(ASTBinaryOperatorKind::GreaterThanOrEqual)
             }
 
+            TokenKind::DoubleAmpersand => {
+                Some(ASTBinaryOperatorKind::LogicalAnd)
+            }
             _ => {
                 None
             }
