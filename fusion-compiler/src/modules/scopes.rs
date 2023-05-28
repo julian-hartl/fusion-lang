@@ -120,7 +120,7 @@ impl GlobalScope {
             structs: IdxVec::new(),
             fields: IdxVec::new(),
         };
-        // scope.create_external_modules();
+        scope.create_external_modules();
         scope
     }
 
