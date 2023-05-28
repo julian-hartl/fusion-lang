@@ -312,7 +312,6 @@ impl MemoryLocationAllocator {
         ];
         for (i, place) in self.parameters.clone().into_iter().enumerate() {
             // todo: check if parameters should be colored (e.g. if they are structs)
-            self.add_local(place);
             self.color_map.insert(self.find_local(&place), RegisterColor::from_register(parameter_regs[i]));
         }
     }
