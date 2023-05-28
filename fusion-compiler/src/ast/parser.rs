@@ -518,7 +518,7 @@ impl<'a> Parser<'a> {
         }
         return expr;
     }
-    
+
     fn parse_index_expression(&mut self, expr: ASTExpression) -> ASTExpression {
         let open_bracket = self.consume_and_check(TokenKind::OpenBracket).clone();
         let index = self.parse_expression();
@@ -567,14 +567,24 @@ impl<'a> Parser<'a> {
     fn parse_char_expression(&mut self, token: Token) -> ASTExpression {
         let open_quote = token;
         let mut char = '\0';
-        let mut has_error = false;
         while self.current().kind != TokenKind::SingleQuote && !self.is_at_end() {
             let token = self.consume();
             let literal = &token.span.literal;
-            if !has_error {
-                if literal.len() != 1 {
+            if literal == "\\" {
+                let next = self.consume_no_whitespace();
+                if next.span.length() < 1 {
+                    self.diagnostics_bag.borrow_mut().report_invalid_escape_sequence(&next);
+                } else {
+                    let c = EscapedCharacter::from_char(next.span.literal.chars().next().unwrap());
+                    if let Some(c) = c {
+                        char = c.as_char()
+                    } else {
+                        self.diagnostics_bag.borrow_mut().report_invalid_escape_sequence(&next);
+                    }
+                }
+            } else {
+                if literal.len() < 1 {
                     self.diagnostics_bag.borrow_mut().report_invalid_character_literal(&token.span);
-                    has_error = true;
                 } else {
                     char = literal.chars().next().unwrap();
                 }

@@ -667,6 +667,7 @@ pub enum EscapedCharacter {
     CarriageReturn,
     Tab,
     Quote,
+    Zero,
 }
 
 impl EscapedCharacter {
@@ -676,6 +677,7 @@ impl EscapedCharacter {
             'r' => Some(EscapedCharacter::CarriageReturn),
             't' => Some(EscapedCharacter::Tab),
             '"' => Some(EscapedCharacter::Quote),
+            '0' => Some(EscapedCharacter::Zero),
             _ => None,
         }
     }
@@ -688,6 +690,7 @@ impl EscapedCharacter {
             EscapedCharacter::CarriageReturn => result.push('r'),
             EscapedCharacter::Tab => result.push('t'),
             EscapedCharacter::Quote => result.push('"'),
+            EscapedCharacter::Zero => result.push('0'),
         }
         result
     }
@@ -699,8 +702,19 @@ impl EscapedCharacter {
             EscapedCharacter::CarriageReturn => result.push_str(&format!("\r")),
             EscapedCharacter::Tab => result.push_str(&format!("\t")),
             EscapedCharacter::Quote => result.push_str(&format!("\"")),
+            EscapedCharacter::Zero => result.push_str(&format!("\0")),
         }
         result
+    }
+
+    pub fn as_char(&self) -> char {
+        match self {
+            EscapedCharacter::Newline => '\n',
+            EscapedCharacter::CarriageReturn => '\r',
+            EscapedCharacter::Tab => '\t',
+            EscapedCharacter::Quote => '"',
+            EscapedCharacter::Zero => '\0',
+        }
     }
 }
 
