@@ -1,7 +1,7 @@
 
 
 func main -> i64 {
-    std::io::println("Hello, world!")
+    std::io::write(1, "Hello, world!\n", 14)
     return add(1,2)
 }
 
