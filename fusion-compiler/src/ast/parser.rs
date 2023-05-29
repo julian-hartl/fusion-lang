@@ -300,16 +300,21 @@ impl<'a> Parser<'a> {
     fn parse_type(&mut self) -> TypeSyntax {
         self.consume_whitespace();
         let ptr = if self.current().kind == TokenKind::Asterisk {
-            Some((self.consume_and_check(TokenKind::Asterisk).clone(), self.maybe_consume(TokenKind::Mut).cloned()))
+            let mut ptrs = vec![];
+            while self.current().kind == TokenKind::Asterisk {
+                ptrs.push((self.consume_and_check(TokenKind::Asterisk).clone(), self.maybe_consume(TokenKind::Mut).cloned()));
+            }
+            Some(ptrs)
         } else {
             None
         };
         let starting_id = self.consume_and_check(TokenKind::Identifier).clone();
         let type_name = self.parse_qualified_identifier(starting_id);
-        TypeSyntax::new(type_name, ptr.map(|(asterisk, mut_)| PtrSyntax {
-            mut_token: mut_,
+        let ptrs = ptr.map(|ptrs| ptrs.into_iter().map(|(asterisk, mut_token)| PtrSyntax {
             star: asterisk,
-        }))
+            mut_token,
+        }).collect());
+        TypeSyntax::new(type_name, ptrs)
     }
 
     fn parse_expression_statement(&mut self) -> ASTStatement {

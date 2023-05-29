@@ -1332,8 +1332,8 @@ impl BodyGen {
                 }
                 Rvalue::Struct(fields)
             }
-            HIRExpressionKind::Ref(_) => {
-                Rvalue::AddressOf(Mutability::Immutable, self.gen_as_place(expr))
+            HIRExpressionKind::Ref(expr) => {
+                Rvalue::AddressOf(Mutability::Immutable, self.gen_as_place(&expr.expression))
             }
             HIRExpressionKind::Cast(_) => {
                 unimplemented!("Cast")

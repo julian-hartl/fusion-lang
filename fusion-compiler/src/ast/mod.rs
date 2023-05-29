@@ -206,7 +206,7 @@ pub struct StaticTypeAnnotation {
 #[derive(Debug, Clone)]
 pub struct TypeSyntax {
     pub name: QualifiedIdentifier,
-    pub ptr: Option<PtrSyntax>,
+    pub ptr: Option<Vec<PtrSyntax>>,
 }
 
 #[derive(Debug, Clone)]
@@ -216,7 +216,7 @@ pub struct PtrSyntax {
 }
 
 impl TypeSyntax {
-    pub fn new(name: QualifiedIdentifier, ptr: Option<PtrSyntax>) -> Self {
+    pub fn new(name: QualifiedIdentifier, ptr: Option<Vec<PtrSyntax>>) -> Self {
         Self { name, ptr }
     }
 
@@ -224,9 +224,11 @@ impl TypeSyntax {
         let id_span = self.name.span();
         let mut spans = vec![&id_span];
         if let Some(ptr) = &self.ptr {
-            spans.push(&ptr.star.span);
-            if let Some(mut_token) = &ptr.mut_token {
-                spans.push(&mut_token.span);
+            for ptr in ptr {
+                spans.push(&ptr.star.span);
+                if let Some(mut_token) = &ptr.mut_token {
+                    spans.push(&mut_token.span);
+                }
             }
         }
         TextSpan::merge(
@@ -238,11 +240,14 @@ impl TypeSyntax {
 impl Display for TypeSyntax {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if let Some(ptr) = &self.ptr {
-            if ptr.mut_token.is_some() {
-                write!(f, "*mut {}", self.name.get_qualified_name())
-            } else {
-                write!(f, "*{}", self.name.get_qualified_name())
+            for ptr in ptr {
+                if ptr.mut_token.is_some() {
+                    write!(f, "*mut")?;
+                } else {
+                    write!(f, "*")?;
+                }
             }
+            write!(f, " {}", self.name.get_qualified_name())
         } else {
             write!(f, "{}", self.name.get_qualified_name())
         }

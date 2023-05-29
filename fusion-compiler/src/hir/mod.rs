@@ -1,19 +1,18 @@
-
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
-
 use fusion_compiler::{idx, Result};
+use fusion_compiler::Idx;
 
 use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIndexExpression, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, QualifiedIdentifier, TypeSyntax};
-use crate::ast::lexer::{TokenKind};
+use crate::ast::lexer::TokenKind;
 use crate::ast::visitor::ASTVisitor;
-use crate::compilation::{SourceTree};
+use crate::compilation::SourceTree;
 use crate::diagnostics::DiagnosticsBagCell;
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell, SymbolLookupResult};
 use crate::modules::symbols::{Function, ModuleIdx};
 use crate::text::span::TextSpan;
-use crate::typings::{Type};
+use crate::typings::Type;
 
 mod visitor;
 mod visualization;
@@ -96,13 +95,14 @@ pub struct HIRWhileStatement {
     pub body: Vec<HIRStatement>,
 }
 
-
+#[derive(Debug)]
 pub struct HIRExpression {
     pub kind: HIRExpressionKind,
     pub span: TextSpan,
     pub ty: Type,
 }
 
+#[derive(Debug)]
 pub enum HIRExpressionKind {
     Literal(HIRLiteralExpression),
     Variable(HIRVariableExpression),
@@ -119,42 +119,51 @@ pub enum HIRExpressionKind {
     Void,
 }
 
+#[derive(Debug)]
 pub struct HIRIndexExpression {
     pub target: Box<HIRExpression>,
     pub index: Box<HIRExpression>,
 }
 
+#[derive(Debug)]
 pub struct HIRStructInitExpression {
     pub struct_id: StructIdx,
     pub fields: Vec<HIRStructInitField>,
 }
 
+#[derive(Debug)]
 pub struct HIRStructInitField {
     pub field_id: FieldIdx,
     pub value: HIRExpression,
 }
 
+#[derive(Debug)]
 pub struct HIRCastExpression {
     pub expression: Box<HIRExpression>,
     pub ty: Type,
 }
 
+#[derive(Debug)]
 pub struct HIRRefExpression {
     pub expression: Box<HIRExpression>,
 }
 
+#[derive(Debug)]
 pub struct HIRDerefExpression {
     pub target: Box<HIRExpression>,
 }
 
+#[derive(Debug)]
 pub struct HIRParenthesizedExpression {
     pub expression: Box<HIRExpression>,
 }
 
+#[derive(Debug)]
 pub struct HIRLiteralExpression {
     pub value: HIRLiteralValue,
 }
 
+#[derive(Debug)]
 pub enum HIRLiteralValue {
     Integer(i64),
     Boolean(bool),
@@ -162,15 +171,18 @@ pub enum HIRLiteralValue {
     Char(char),
 }
 
+#[derive(Debug)]
 pub struct HIRVariableExpression {
     pub variable_id: VariableIdx,
 }
 
+#[derive(Debug)]
 pub struct HIRAssignmentExpression {
     pub target: Box<HIRExpression>,
     pub value: Box<HIRExpression>,
 }
 
+#[derive(Debug)]
 pub struct HIRBinaryExpression {
     pub left: Box<HIRExpression>,
     pub op: HIRBinaryOperator,
@@ -454,6 +466,7 @@ impl From<&ASTBinaryOperator> for HIRBinaryOperator {
     }
 }
 
+#[derive(Debug)]
 pub struct HIRUnaryExpression {
     pub op: HIRUnaryOperator,
     pub operand: Box<HIRExpression>,
@@ -512,17 +525,20 @@ impl HIRUnaryOperator {
     }
 }
 
+#[derive(Debug)]
 pub struct HIRCallExpression {
     pub callee: HIRCallee,
     pub args: Vec<HIRExpression>,
 }
 
+#[derive(Debug)]
 pub enum HIRCallee {
     Function(FunctionIdx),
     Undeclared(String),
     Invalid,
 }
 
+#[derive(Debug)]
 pub struct HIRFieldAccessExpression {
     pub target: Box<HIRExpression>,
     pub field_id: FieldIdx,
@@ -636,8 +652,6 @@ impl HIR {
     }
 }
 
-
-use fusion_compiler::Idx;
 
 idx!(VariableIdx);
 
@@ -877,7 +891,11 @@ impl HIRGen {
                         variable.ty.clone()
                     }
                     HIRExpressionKind::Deref(deref_expr) => {
-                        let is_mutable = self.is_expr_mutable(&deref_expr.target);
+                        dbg!(&target);
+                        let is_mutable = match &deref_expr.target.ty {
+                            Type::Ptr(_, is_mutable) => *is_mutable,
+                            _ => unreachable!(),
+                        };
                         if !is_mutable {
                             self.diagnostics_bag.borrow_mut().report_cannot_assign_to_immutable_pointer(&expr.assignee.span());
                         }
@@ -895,7 +913,7 @@ impl HIRGen {
                     }
                     HIRExpressionKind::Index(index_expr) => {
                         let is_mutable = match &index_expr.target.ty {
-                            Type::Ptr (_, is_mutable) => *is_mutable,
+                            Type::Ptr(_, is_mutable) => *is_mutable,
                             _ => false
                         };
                         if !is_mutable {
@@ -1083,7 +1101,7 @@ impl HIRGen {
                 let index = self.gen_expression(&expr.index);
                 self.ensure_type_match(&index.span, &index.ty, &Type::I64);
                 let ty = match &target.ty {
-                    Type::Ptr(inner,_) => {
+                    Type::Ptr(inner, _) => {
                         *inner.clone()
                     }
                     Type::Error => {
@@ -1219,7 +1237,11 @@ impl HIRGen {
     fn resolve_type_syntax(&mut self, ty_syntax: &TypeSyntax) -> Type {
         if let Some(ty) = self.resolve_type_from_identifier(&ty_syntax.name) {
             return if let Some(ptr) = &ty_syntax.ptr {
-                Type::Ptr(Box::new(ty), ptr.mut_token.is_some())
+                let mut ty = ty;
+                for ptr in ptr.iter().rev() {
+                    ty = Type::Ptr(Box::new(ty), ptr.mut_token.is_some());
+                }
+                ty
             } else {
                 ty
             };
@@ -1447,9 +1469,7 @@ impl ASTVisitor for HIRGlobalSymbolGatherer<'_> {
         self.global_initializers.push((variable_declaration_stmt.variable_id, variable_declaration_stmt.initializer));
     }
 
-    fn visit_index_expression(&mut self, index_expression: &ASTIndexExpression, expr: &ASTExpression) {
-
-    }
+    fn visit_index_expression(&mut self, index_expression: &ASTIndexExpression, expr: &ASTExpression) {}
 
     fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression) {}
 
