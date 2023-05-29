@@ -46,8 +46,8 @@ impl StackOffset {
         -(self.0 as i32)
     }
 
-    pub fn add_offset(&self, offset: u32) -> Self {
-        StackOffset(self.0 + offset)
+    pub fn add_offset(&mut self, offset: u32) {
+        self.0 += offset;
     }
 }
 
@@ -396,7 +396,15 @@ impl MemoryLocationAllocator {
     }
 
     fn is_register_free(&self, register: X86Register) -> bool {
-        !self.temp_registers.contains(&register) && !self.is_register_used(register)
+        let index = Self::get_register_list(register.size()).iter()
+            .enumerate().find(|(_, r)| **r == register).map(|(i, _)| i).expect("Register not found in register list");
+        let registers_to_consider = [
+            &GENERAL_PURPOSE_REGS_8_BIT[index],
+            &GENERAL_PURPOSE_REGS_16_BIT[index],
+            &GENERAL_PURPOSE_REGS_32_BIT[index],
+            &GENERAL_PURPOSE_REGS_64_BIT[index],
+        ];
+        registers_to_consider.iter().all(|r| !self.temp_registers.contains(r) && !self.is_register_used(**r))
     }
 
     fn is_register_used(&self, register: X86Register) -> bool {
@@ -1337,6 +1345,7 @@ impl<'a> X86Codegen<'a> {
                     local_idx,
                     offset,
                 ));
+                self.allocator_mut().temp_registers.insert(register);
                 register
             }
             PlaceLocation::Register(reg) => {
