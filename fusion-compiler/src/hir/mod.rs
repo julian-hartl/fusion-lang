@@ -1023,7 +1023,7 @@ impl HIRGen {
                         let ty = if let Some(member) = member {
                             scope.get_field(&member).ty.clone()
                         } else {
-                            self.diagnostics_bag.borrow_mut().report_struct_has_no_member(&expr.expr.span(), &struct_.name.name);
+                            self.diagnostics_bag.borrow_mut().report_struct_has_no_member(&expr.member.span, &struct_.name.name);
                             Type::Error
                         };
                         (ty, member.unwrap_or(FieldIdx::new(0)))
