@@ -17,6 +17,14 @@ func main -> i64 {
         std::io::println(p.text)
         i = i - 1
     }
+    i = 10
+    while i > 0 {
+       let mut j = 1
+       while j < 2 {
+           std::io::println("Test")
+           j = j + 1
+       }
+    }
     return i + 1
 }
 
