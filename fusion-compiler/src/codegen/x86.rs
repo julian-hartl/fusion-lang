@@ -47,6 +47,7 @@ impl StackOffset {
     }
 }
 
+#[derive(Debug)]
 struct StackFrame {
     blocks: BTreeSet<StackFrameBlock>,
     current_index: usize,
@@ -63,7 +64,7 @@ impl StackFrame {
     }
 
     pub fn allocate(&mut self, size: u32) -> (StackOffset, StackFrameBlockIdx) {
-        let (start, block_idx) = match self.find_free_range(size) {
+        match self.find_free_range(size) {
             None => {
                 self.push_block(size)
             }
@@ -71,25 +72,26 @@ impl StackFrame {
                 let idx = self.next_idx();
                 let block = StackFrameBlock { start, end, idx };
                 self.blocks.insert(block);
-                (start, idx)
+                (StackOffset(start), idx)
             }
-        };
-        (StackOffset(start), block_idx)
+        }
     }
 
-    pub fn push_block(&mut self, size: u32) -> (u32, StackFrameBlockIdx) {
+    pub fn push_block(&mut self, size: u32) -> (StackOffset, StackFrameBlockIdx) {
         let start = self.get_stack_pointer();
         let end = start + size;
         let idx = self.next_idx();
         self.blocks.insert(StackFrameBlock { start, end, idx });
         self.stack_pointer = end;
-        (start, idx)
+        (StackOffset(start), idx)
     }
 
     pub fn pop_block(&mut self) -> Option<StackFrameBlockIdx> {
         let block = self.blocks.iter().last()?;
+        let idx = block.idx;
         self.stack_pointer = block.start;
-        Some(block.idx)
+        self.free_block(idx);
+        Some(idx)
     }
 
     pub fn decrease_stack_by(&mut self, size: u32) {
@@ -108,7 +110,9 @@ impl StackFrame {
 
     /// Checks if the stack pointer does not match the actual top of the stack and returns the difference.
     pub fn check_difference(&self) -> Option<u32> {
-        let diff = self.stack_pointer - self.blocks.iter().last()?.end;
+        let topmost_block_pointer = self.blocks.iter().last()?.end;
+        assert!(self.stack_pointer >= topmost_block_pointer, "Stack pointer {} is below topmost block pointer {}", self.stack_pointer, topmost_block_pointer);
+        let diff = self.stack_pointer - topmost_block_pointer;
         if diff == 0 {
             None
         } else {
@@ -629,7 +633,7 @@ enum X86AddressingMode {
         displacement: i32,
         scale: i32,
     },
-    DataLabel(GlobalLabelIdx)
+    DataLabel(GlobalLabelIdx),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -718,9 +722,8 @@ impl Display for X86Operand {
                         }
                     }
                     X86AddressingMode::DataLabel(label) => {
-                                write!(f, "[rip + {}]", label)
-                        }
-
+                        write!(f, "[rip + {}]", label)
+                    }
                 }
             }
         }
@@ -1016,13 +1019,14 @@ impl<'a> X86Codegen<'a> {
         self.mov_unchecked(
             X86Operand::register(X86Register::RBP),
             X86Operand::register(X86Register::RSP),
-        )
-        ;
+        );
         self.allocator_mut().allocate(&body.scope);
-        // todo: calculate size of locals that are alive for the whole function
-        let locals_size = 0;
+        let locals_size  = self.allocator().stack.stack_pointer - 8;
         if locals_size > 0 {
-            self.increase_stack_size(locals_size);
+            self.sub_unchecked(
+                X86Operand::register(X86Register::RSP),
+                X86Operand::immediate(X86Immediate::QWord(locals_size as i64)),
+            );
         }
         for bb in body.basic_blocks.indexed_iter() {
             self.gen_basic_block(bb);
@@ -1075,6 +1079,10 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn clear_stack_frame(&mut self) {
+        self.free_temp_registers(&self.temp_registers.iter().map(|(reg, _)| *reg).collect());
+        self.decrease_stack_size(
+            self.allocator().stack.stack_pointer - 8
+        );
         self.mov_unchecked(
             X86Operand::register(X86Register::RSP),
             X86Operand::register(X86Register::RBP),
@@ -1082,6 +1090,7 @@ impl<'a> X86Codegen<'a> {
         self.pop(
             X86Operand::register(X86Register::RBP),
         );
+        assert_eq!(self.allocator().stack.stack_pointer, 0);
         self.ret();
     }
 
@@ -1182,18 +1191,10 @@ impl<'a> X86Codegen<'a> {
                 self.free_temp_registers(&temps);
             }
             InstructionKind::StorageLive { local } => {
-                match self.allocator_mut().get_location(local) {
-                    PlaceLocation::Stack(_) => {
-                        let local = self.get_local(*local);
-                        self.increase_stack_size(local.ty.layout().size);
-                    }
-                    PlaceLocation::Register(_) => {}
-                }
                 self.allocator_mut().mark_local_as_alive(*local);
             }
             InstructionKind::StorageDead { local } => {
                 self.allocator_mut().mark_variable_as_dead(*local);
-                self.cleanup_stack();
             }
             InstructionKind::PlaceMention(_) => {}
         }
@@ -1222,8 +1223,8 @@ impl<'a> X86Codegen<'a> {
                 register
             }
             Some(local) => {
-                let (stack_offset, block) = self.allocator_mut().stack.allocate(register.size().num_bytes());
-                self.push(X86Operand::register(register));
+                // todo: replace with push
+                let (stack_offset, block) = self.push(X86Operand::register(register));
                 self.allocator_mut().locals.insert(local, PlaceLocation::Stack(stack_offset.to_rbp_offset()));
                 self.allocator_mut().temp_registers.insert(register);
                 self.temp_registers.insert(register, (local, stack_offset, block));
@@ -1239,16 +1240,16 @@ impl<'a> X86Codegen<'a> {
             Some((local, saved_value_offset, block)) => {
                 self.allocator_mut().locals.insert(local, PlaceLocation::Register(register));
                 self.allocator_mut().temp_registers.remove(&register);
+                self.temp_registers.remove(&register);
                 let is_on_top = self.allocator().stack.blocks.iter().last().map(|last_block| last_block.idx == block).unwrap_or(false);
-                self.allocator_mut().stack.free_block(block);
                 if is_on_top {
                     self.pop(X86Operand::register(register));
                 } else {
+                    self.allocator_mut().stack.free_block(block);
                     self.mov_unchecked(
                         X86Operand::register(register),
                         X86Operand::const_bp_offset(saved_value_offset.to_rbp_offset(), register.size()),
                     );
-                    self.cleanup_stack();
                 }
             }
         }
@@ -1265,7 +1266,7 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn free_temp_registers(&mut self, registers: &Vec<X86Register>) {
-        for register in registers.iter() {
+        for register in registers.iter().rev() {
             self.free_temp_register(*register);
         }
     }
@@ -1313,8 +1314,7 @@ impl<'a> X86Codegen<'a> {
             self.mov_unchecked(X86Operand::register(temp_register), source);
             self.mov_unchecked(destination, X86Operand::register(temp_register));
             self.free_temp_register(temp_register);
-        }
-        else {
+        } else {
             self.mov_unchecked(destination, source);
         }
     }
@@ -1350,9 +1350,10 @@ impl<'a> X86Codegen<'a> {
         self._push_instruction(X86Instruction::Call(name));
     }
 
-    fn push(&mut self, operand: X86Operand) {
-        self.allocator_mut().stack.push_block(operand.size.num_bytes());
+    fn push(&mut self, operand: X86Operand) -> (StackOffset, StackFrameBlockIdx) {
+        let val = self.allocator_mut().stack.push_block(operand.size.num_bytes());
         self._push_instruction(X86Instruction::Push(operand));
+        val
     }
 
     fn pop(&mut self, operand: X86Operand) {
@@ -1481,9 +1482,9 @@ impl<'a> X86Codegen<'a> {
                 let label = self.get_global_label(*global_idx);
                 let data_label_op = X86Operand {
                     size: X86Size::QWord,
-                    mode: X86AddressingMode::DataLabel(label)
+                    mode: X86AddressingMode::DataLabel(label),
                 };
-                let (store_at,temps) = self.get_operand_for_place(store_at);
+                let (store_at, temps) = self.get_operand_for_place(store_at);
                 self.lea(store_at, data_label_op);
                 self.free_temp_registers(&temps);
             }
