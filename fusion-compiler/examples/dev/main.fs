@@ -17,8 +17,7 @@ func main -> i64 {
         std::io::println(p.text)
         i = i - 1
     }
-
-    return 0
+    return i + 1
 }
 
 func set_new_msg(msg: *mut *char) {
