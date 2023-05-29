@@ -1096,6 +1096,10 @@ impl BodyGen {
                 self.push_terminator_no_block(terminator);
                 self.set_current_block(then_block);
                 self.gen_stmts(&if_stmt.then);
+                self.push_terminator(Terminator {
+                    span:Some( stmt.span.clone()),
+                    kind: TerminatorKind::Goto(end_block),
+                });
                 self.exit_scope();
                 if let Some(else_block) = else_block {
                     self.enter_scope();
