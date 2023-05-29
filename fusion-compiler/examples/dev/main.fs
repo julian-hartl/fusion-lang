@@ -15,8 +15,6 @@ func main -> i64 {
         std::io::println(p.text)
         set_new_msg(&mut p.text)
         std::io::println(p.text)
-        let t = 2
-        std::io::println(&msg[t])
         i = i - 1
     }
     return i + 1
