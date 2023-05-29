@@ -7,7 +7,10 @@ func main -> i64 {
     std::io::println(msg)
     set_new_msg(&mut msg)
     std::io::println(msg)
-    let mut program = Program { text: msg }
+    let mut program = Program {
+        text: "Hello, world!"
+    }
+    std::io::println(program.text)
     program.text = "Goodbye, world!"
     std::io::println(program.text)
     return 0
