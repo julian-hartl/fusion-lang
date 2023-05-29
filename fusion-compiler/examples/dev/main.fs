@@ -3,16 +3,16 @@ struct Program {
 }
 
 func main -> i64 {
-    let msg = "Hello, world!"
-    std::io::println(msg)
-    set_new_msg(&mut msg)
-    std::io::println(msg)
-    let mut program = Program {
-        text: "Hello, world!"
+    let mut i = 10
+    while i > 0 {
+        let msg = "Hello, world!"
+        let p = Program { text: msg }
+        std::io::println(p.text)
+        set_new_msg(&mut p.text)
+        std::io::println(p.text)
+        i = i - 1
     }
-    std::io::println(program.text)
-    program.text = "Goodbye, world!"
-    std::io::println(program.text)
+
     return 0
 }
 
