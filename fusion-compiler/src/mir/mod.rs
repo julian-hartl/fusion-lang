@@ -344,7 +344,7 @@ impl Place {
 pub enum Projection {
     Field(FieldIdx),
     Index(LocalIdx),
-    ConstantIndex(u64),
+    ConstantIndex(u32),
     Deref,
 }
 
