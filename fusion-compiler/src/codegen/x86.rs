@@ -369,7 +369,7 @@ impl MemoryLocationAllocator {
     }
 
     fn get_free_register(&self, size: X86Size) -> Option<X86Register> {
-        let registers = Self::get_register_list(size);
+        let registers = X86Register::get_register_list(size);
         for register in registers {
             if self.is_register_free(*register) {
                 return Some(*register);
@@ -378,14 +378,7 @@ impl MemoryLocationAllocator {
         None
     }
 
-    fn get_register_list(size: X86Size) -> &'static [X86Register; GENERAL_PURPOSE_REGISTER_COUNT] {
-        match size {
-            X86Size::QWord => GENERAL_PURPOSE_REGS_64_BIT,
-            X86Size::DWord => GENERAL_PURPOSE_REGS_32_BIT,
-            X86Size::Word => GENERAL_PURPOSE_REGS_16_BIT,
-            X86Size::Byte => GENERAL_PURPOSE_REGS_8_BIT,
-        }
-    }
+
 
     pub fn mark_local_as_alive(&mut self, var: LocalIdx) {
         self.alive_locals.insert(var);
@@ -396,8 +389,7 @@ impl MemoryLocationAllocator {
     }
 
     fn is_register_free(&self, register: X86Register) -> bool {
-        let index = Self::get_register_list(register.size()).iter()
-            .enumerate().find(|(_, r)| **r == register).map(|(i, _)| i).expect("Register not found in register list");
+        let index = register.index();
         let registers_to_consider = [
             &GENERAL_PURPOSE_REGS_8_BIT[index],
             &GENERAL_PURPOSE_REGS_16_BIT[index],
@@ -538,6 +530,36 @@ impl X86Register {
             | X86Register::R8 | X86Register::R9 | X86Register::R10 | X86Register::R11
             | X86Register::R12 | X86Register::R13 | X86Register::R14 | X86Register::R15 => X86Size::QWord,
         }
+    }
+
+    pub fn get_register_list(size: X86Size) -> &'static [X86Register; GENERAL_PURPOSE_REGISTER_COUNT] {
+        match size {
+            X86Size::QWord => GENERAL_PURPOSE_REGS_64_BIT,
+            X86Size::DWord => GENERAL_PURPOSE_REGS_32_BIT,
+            X86Size::Word => GENERAL_PURPOSE_REGS_16_BIT,
+            X86Size::Byte => GENERAL_PURPOSE_REGS_8_BIT,
+        }
+    }
+
+    pub fn index(&self) -> usize {
+        Self::get_register_list(self.size()).iter()
+            .enumerate().find(|(_, r)| *r == self).map(|(i, _)| i).expect("Register not found in register list")
+    }
+
+    pub fn resize(self, size: &X86Size) -> X86Register {
+
+        let index = self.index();
+        match size {
+            X86Size::Byte =>
+                GENERAL_PURPOSE_REGS_8_BIT[index],
+            X86Size::Word =>
+                GENERAL_PURPOSE_REGS_16_BIT[index],
+            X86Size::DWord =>
+                GENERAL_PURPOSE_REGS_32_BIT[index],
+            X86Size::QWord =>
+                GENERAL_PURPOSE_REGS_64_BIT[index],
+        }
+
     }
 }
 
@@ -1212,9 +1234,10 @@ impl<'a> X86Codegen<'a> {
                 // todo: for now we assume that each function returns its value in rax
                 self.free_temp_registers(&used_regs);
                 let (return_value_operand, temps) = self.get_operand_for_place(return_value_place);
+                let size = return_value_operand.size;
                 self.mov_unchecked(
                     return_value_operand,
-                    X86Operand::register(X86Register::RAX),
+                    X86Operand::register(X86Register::RAX.resize(&size)),
                 );
                 self.free_temp_registers(&temps);
             }
