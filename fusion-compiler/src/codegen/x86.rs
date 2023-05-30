@@ -390,7 +390,6 @@ impl MemoryLocationAllocator {
                 self.allocate_on_stack(idx, local_layout);
             }
         }
-
     }
 
     fn allocate_on_stack(&mut self, idx: LocalIdx, local_layout: Layout) {
@@ -399,7 +398,7 @@ impl MemoryLocationAllocator {
     }
 
     pub fn get_block_offset(&self, block: StackFrameBlockIdx) -> StackOffset {
-        self.stack.get_block_offset(block).expect( format!("Block {:?} not found", block).as_str() )
+        self.stack.get_block_offset(block).expect(format!("Block {:?} not found", block).as_str())
     }
 
     pub fn mark_variable_as_dead(&mut self, local: LocalIdx) {
@@ -1192,9 +1191,8 @@ impl<'a> X86Codegen<'a> {
             TerminatorKind::Return => {
                 self.allocator_mut().stack = saved_stack_frame;
             }
-            _ =>{}
+            _ => {}
         }
-
     }
 
     pub fn gen_term(&mut self, term: &crate::mir::Terminator) {
@@ -1267,12 +1265,15 @@ impl<'a> X86Codegen<'a> {
             }
             InstructionKind::StorageLive { local: local_idx } => {
                 let layout = self.layout_local(*local_idx);
-                let size = layout.size;
+                let sp = self.allocator().stack.stack_pointer;
                 self.allocator_mut().mark_local_as_alive(*local_idx, layout);
-                self.sub_unchecked(
-                    X86Operand::register(X86Register::RSP),
-                    X86Operand::immediate(X86Immediate::QWord(size as i64)),
-                );
+                let diff = self.allocator().stack.stack_pointer - sp;
+                if diff > 0 {
+                    self.sub_unchecked(
+                        X86Operand::register(X86Register::RSP),
+                        X86Operand::immediate(X86Immediate::QWord(diff as i64)),
+                    );
+                }
             }
             InstructionKind::StorageDead { local } => {
                 self.allocator_mut().mark_variable_as_dead(*local);
@@ -1321,7 +1322,7 @@ impl<'a> X86Codegen<'a> {
             None => {}
             Some(temp) => {
                 match temp {
-                    Temp::SavedReg(local,  block) => {
+                    Temp::SavedReg(local, block) => {
                         self.allocator_mut().locals.insert(local, PlaceLocation::Register(register));
                         self.allocator_mut().temp_registers.remove(&register);
                         self.temps.remove(&register);
