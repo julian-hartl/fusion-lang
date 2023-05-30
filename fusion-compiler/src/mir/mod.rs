@@ -63,7 +63,7 @@ impl BasicBlock {
         Self {
             instructions: vec![],
             terminator: Terminator {
-                kind: TerminatorKind::Next,
+                kind: TerminatorKind::Unresolved,
                 span: None,
             },
         }
@@ -256,6 +256,14 @@ impl BodyScope {
 
     fn map_hir_ty(&self, ty: &Type) -> MIRType {
         MIRType::from_type(ty, &self.get_scope())
+    }
+
+    pub fn alive_locals(&self) -> Vec<LocalIdx> {
+        let mut alive = vec![];
+        for scope in self.scope_stack.iter().rev() {
+            alive.extend(self.scopes.get(*scope).locals.iter().rev().cloned());
+        }
+        alive
     }
 }
 
@@ -835,6 +843,7 @@ pub enum TerminatorKind {
     If { condition: Operand, then: BasicBlockIdx, else_: BasicBlockIdx },
     Return,
     Next,
+    Unresolved,
 }
 
 idx!(BodyIdx);
@@ -887,6 +896,7 @@ impl MIR {
                     TerminatorKind::Next => {
                         s.push_str(&format!("    {} -> {};\n", index, index.add(1)));
                     }
+                    TerminatorKind::Unresolved => {}
                 }
                 s.push_str(&format!("    {} [label=\"{}\"];\n", index, instructions));
             }
@@ -927,6 +937,7 @@ impl MIR {
                         s.push_str(&format!("    return\n"));
                     }
                     TerminatorKind::Next => {}
+                    TerminatorKind::Unresolved => {}
                 }
             }
         }
@@ -1044,13 +1055,17 @@ impl BodyGen {
             self.start_var_lifetime(LocalIdx::new(arg_idx));
         }
         self.gen_stmts(statements);
-        let last_term = self.body.basic_blocks.last().map(|bb| &bb.terminator.kind);
-        if let Some(last_term) = last_term {
-            if let TerminatorKind::Next = last_term {
-                self.body.basic_blocks.last_mut().unwrap().terminator = Terminator {
-                    span: None,
-                    kind: TerminatorKind::Return,
-                };
+        let bb_len = self.body.basic_blocks.len();
+        for (idx, bb) in self.body.basic_blocks.iter_mut().enumerate() {
+            match &bb.terminator.kind {
+                TerminatorKind::Unresolved => {
+                    if idx == bb_len - 1 {
+                        bb.terminator.kind = TerminatorKind::Return;
+                    } else {
+                        bb.terminator.kind = TerminatorKind::Next;
+                    }
+                }
+                _ => {}
             }
         }
         self.exit_scope();
@@ -1093,11 +1108,11 @@ impl BodyGen {
                 let end_block = self.push_basic_block();
                 self.set_current_block(current_block);
                 let terminator = Terminator::if_(stmt.span.clone(), cond_value, then_block, else_block.clone().unwrap_or(end_block));
-                self.push_terminator_no_block(terminator);
+                self.push_terminator(terminator);
                 self.set_current_block(then_block);
                 self.gen_stmts(&if_stmt.then);
                 self.push_terminator(Terminator {
-                    span:Some( stmt.span.clone()),
+                    span: Some(stmt.span.clone()),
                     kind: TerminatorKind::Goto(end_block),
                 });
                 self.exit_scope();
@@ -1143,11 +1158,8 @@ impl BodyGen {
                     },
                 });
                 let terminator = Terminator::return_(stmt.span.clone());
-                if self.body.scope.scope_stack.len() == 1 {
-                    self.push_terminator_no_block(terminator);
-                } else {
-                    self.push_terminator(terminator);
-                }
+                self.push_terminator(terminator);
+
             }
         }
     }
@@ -1343,10 +1355,10 @@ impl BodyGen {
                 unimplemented!("Cast")
             }
             HIRExpressionKind::Literal(
-            HIRLiteralExpression {
-                value: HIRLiteralValue::String(value),
-                ..
-            },
+                HIRLiteralExpression {
+                    value: HIRLiteralValue::String(value),
+                    ..
+                },
             ) => {
                 Rvalue::Global(self.global_scope.borrow_mut().add_global_string(value.clone()))
             }
@@ -1358,7 +1370,11 @@ impl BodyGen {
         self.body.basic_blocks.push(BasicBlock::new())
     }
 
-    pub fn current_block(&mut self) -> &mut BasicBlock {
+    pub fn current_block(&self) -> &BasicBlock {
+        self.body.basic_blocks.get(self.current_block)
+    }
+
+    pub fn current_block_mut(&mut self) -> &mut BasicBlock {
         self.body.basic_blocks.get_mut(self.current_block)
     }
 
@@ -1367,27 +1383,35 @@ impl BodyGen {
     }
 
     pub fn push_instruction(&mut self, instruction: Instruction) {
-        self.current_block().instructions.push(instruction);
+        self.current_block_mut().instructions.push(instruction);
     }
 
     pub fn push_terminator(&mut self, terminator: Terminator) {
-        self.push_terminator_no_block(terminator);
-        // todo: uncomment this when there are issues
-        // self.push_basic_block();
+        match &self.current_block_mut().terminator.kind {
+            TerminatorKind::Unresolved => {
+                self.current_block_mut().terminator = terminator;
+            }
+            _ => {}
+        }
     }
 
-    #[inline]
-    pub fn push_terminator_no_block(&mut self, terminator: Terminator) {
-        self.current_block().terminator = terminator;
-    }
 
     fn enter_scope(&mut self) {
         self.body.scope.enter_scope();
     }
 
     fn exit_scope(&mut self) {
-        let current_scope = self.body.scope.current_scope();
-        for local in current_scope.locals.clone().into_iter() {
+        let locals = match &self.current_block().terminator.kind {
+            TerminatorKind::Return => {
+                self.body.scope.alive_locals()
+            }
+            _ => {
+                let mut locals = self.body.scope.current_scope().locals.clone();
+                locals.reverse();
+                locals
+            }
+        };
+        for local in locals {
             self.end_var_lifetime(local);
         }
         self.body.scope.exit_scope();

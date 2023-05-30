@@ -11,14 +11,14 @@ use fusion_compiler::{idx, IdxVec};
 use fusion_compiler::Idx;
 
 use crate::hir::{FunctionIdx, HIRBinaryOperator};
-use crate::mir::{BasicBlock, BasicBlockIdx, BinOp, Body, BodyScope, ConstantValue, GlobalIdx, GlobalValue, Instruction, InstructionKind, Local, LocalIdx, MIR, MIRType, Operand, Place, Projection, Rvalue, Scalar, UnOp};
+use crate::mir::{BasicBlock, BasicBlockIdx, BinOp, Body, BodyScope, ConstantValue, GlobalIdx, GlobalValue, Instruction, InstructionKind, Local, LocalIdx, MIR, MIRType, Operand, Place, Projection, Rvalue, Scalar, TerminatorKind, UnOp};
 use crate::modules::scopes::GlobalScopeCell;
 use crate::modules::symbols::QualifiedName;
 use crate::typings::Layout;
 
 idx!(StackFrameBlockIdx);
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 struct StackFrameBlock {
     start: u32,
     end: u32,
@@ -51,7 +51,7 @@ impl StackOffset {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct StackFrame {
     blocks: BTreeSet<StackFrameBlock>,
     current_index: usize,
@@ -1081,7 +1081,6 @@ impl<'a> X86Codegen<'a> {
         let scope = self.scope.borrow();
         let function = scope.get_function(&body.function);
         self.asm.push_str(&format!("{}:\n", self.format_qualified_name(&function.name)));
-        let function_name = function.name.clone();
         drop(scope);
         self.create_memory_location_allocator(body);
         self.push(
@@ -1144,13 +1143,12 @@ impl<'a> X86Codegen<'a> {
 
     fn clear_stack_frame(&mut self) {
         self.free_temp_registers(&self.temps.iter().map(|(reg, _)| *reg).collect());
-        self.decrease_stack_size(
-            self.allocator().stack.stack_pointer - 8
-        );
         self.mov_unchecked(
             X86Operand::register(X86Register::RSP),
             X86Operand::register(X86Register::RBP),
         );
+        assert_eq!(self.allocator().stack.stack_pointer, 8);
+
         self.pop(
             X86Operand::register(X86Register::RBP),
         );
@@ -1182,12 +1180,21 @@ impl<'a> X86Codegen<'a> {
     }
 
     pub fn gen_basic_block(&mut self, bb: (BasicBlockIdx, &BasicBlock)) {
+        let saved_stack_frame = self.allocator().stack.clone();
         let label_idx = self.get_label(bb.0);
         self.asm.push_str(&format!("{}:\n", label_idx));
         for inst in bb.1.instructions.iter() {
             self.gen_instruction(inst);
         }
-        self.gen_term(&bb.1.terminator);
+        let terminator = &bb.1.terminator;
+        self.gen_term(terminator);
+        match &terminator.kind {
+            TerminatorKind::Return => {
+                self.allocator_mut().stack = saved_stack_frame;
+            }
+            _ =>{}
+        }
+
     }
 
     pub fn gen_term(&mut self, term: &crate::mir::Terminator) {
@@ -1218,6 +1225,9 @@ impl<'a> X86Codegen<'a> {
                 self.jmp(else_label_idx);
             }
             crate::mir::TerminatorKind::Next => {}
+            TerminatorKind::Unresolved => {
+                unreachable!()
+            }
         }
     }
 
