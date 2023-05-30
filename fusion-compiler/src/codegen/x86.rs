@@ -67,7 +67,7 @@ impl StackFrame {
         }
     }
 
-    pub fn allocate(&mut self, size: u32) -> (StackOffset, StackFrameBlockIdx) {
+    pub fn allocate(&mut self, size: u32) -> StackFrameBlockIdx {
         match self.find_free_range(size) {
             None => {
                 self.push_block(size)
@@ -76,18 +76,18 @@ impl StackFrame {
                 let idx = self.next_idx();
                 let block = StackFrameBlock { start, end, idx };
                 self.blocks.insert(block);
-                (StackOffset(start), idx)
+                idx
             }
         }
     }
 
-    pub fn push_block(&mut self, size: u32) -> (StackOffset, StackFrameBlockIdx) {
+    pub fn push_block(&mut self, size: u32) -> StackFrameBlockIdx {
         let start = self.get_stack_pointer();
         let end = start + size;
         let idx = self.next_idx();
         self.blocks.insert(StackFrameBlock { start, end, idx });
         self.stack_pointer = end;
-        (StackOffset(start), idx)
+        idx
     }
 
     pub fn pop_block(&mut self) -> Option<StackFrameBlockIdx> {
@@ -122,6 +122,11 @@ impl StackFrame {
         } else {
             Some(diff)
         }
+    }
+
+    pub fn get_block_offset(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
+        let block = self.blocks.iter().find(|block| block.idx == idx)?;
+        Some(StackOffset(block.start))
     }
 
     fn find_free_range(&self, size: u32) -> Option<(u32, u32)> {
@@ -360,10 +365,7 @@ impl MemoryLocationAllocator {
                     let register = color.into_register(size);
                     self.use_mapped_register(local_idx, register);
                 }
-                None => {
-                    let (rbp_offset, _) = self.stack.allocate(local_layout.size);
-                    self.locals.insert(local_idx, PlaceLocation::Stack(rbp_offset));
-                }
+                None => {}
             }
         }
     }
@@ -379,13 +381,35 @@ impl MemoryLocationAllocator {
     }
 
 
+    pub fn mark_local_as_alive(&mut self, idx: LocalIdx, local_layout: Layout) {
+        self.alive_locals.insert(idx);
+        match self.locals.get(&idx) {
+            Some(PlaceLocation::Stack(_)) => {}
+            Some(PlaceLocation::Register(_)) => {}
+            None => {
+                self.allocate_on_stack(idx, local_layout);
+            }
+        }
 
-    pub fn mark_local_as_alive(&mut self, var: LocalIdx) {
-        self.alive_locals.insert(var);
     }
 
-    pub fn mark_variable_as_dead(&mut self, var: LocalIdx) {
-        self.alive_locals.remove(&var);
+    fn allocate_on_stack(&mut self, idx: LocalIdx, local_layout: Layout) {
+        let block = self.stack.allocate(local_layout.size);
+        self.locals.insert(idx, PlaceLocation::Stack(block));
+    }
+
+    pub fn get_block_offset(&self, block: StackFrameBlockIdx) -> StackOffset {
+        self.stack.get_block_offset(block).expect( format!("Block {:?} not found", block).as_str() )
+    }
+
+    pub fn mark_variable_as_dead(&mut self, local: LocalIdx) {
+        self.alive_locals.remove(&local);
+        match self.get_location(&local) {
+            PlaceLocation::Stack(block) => {
+                self.stack.free_block(*block);
+            }
+            PlaceLocation::Register(_) => {}
+        }
     }
 
     fn is_register_free(&self, register: X86Register) -> bool {
@@ -547,7 +571,6 @@ impl X86Register {
     }
 
     pub fn resize(self, size: &X86Size) -> X86Register {
-
         let index = self.index();
         match size {
             X86Size::Byte =>
@@ -559,7 +582,6 @@ impl X86Register {
             X86Size::QWord =>
                 GENERAL_PURPOSE_REGS_64_BIT[index],
         }
-
     }
 }
 
@@ -964,14 +986,14 @@ impl Display for X86Size {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum PlaceLocation {
-    Stack(StackOffset),
+    Stack(StackFrameBlockIdx),
     Register(X86Register),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Temp {
-    SavedReg(LocalIdx, StackOffset, StackFrameBlockIdx),
-    SavedStack(LocalIdx, StackOffset),
+    SavedReg(LocalIdx, StackFrameBlockIdx),
+    SavedStack(LocalIdx, StackFrameBlockIdx),
 }
 
 pub struct X86Codegen<'a> {
@@ -1070,14 +1092,6 @@ impl<'a> X86Codegen<'a> {
             X86Operand::register(X86Register::RSP),
         );
         self.allocator_mut().allocate(&body.scope);
-        println!("{}: {:?}", function_name, &self.allocator().locals);
-        let locals_size  = self.allocator().stack.stack_pointer - 8;
-        if locals_size > 0 {
-            self.sub_unchecked(
-                X86Operand::register(X86Register::RSP),
-                X86Operand::immediate(X86Immediate::QWord(locals_size as i64)),
-            );
-        }
         for bb in body.basic_blocks.indexed_iter() {
             self.gen_basic_block(bb);
         }
@@ -1241,11 +1255,18 @@ impl<'a> X86Codegen<'a> {
                 );
                 self.free_temp_registers(&temps);
             }
-            InstructionKind::StorageLive { local } => {
-                self.allocator_mut().mark_local_as_alive(*local);
+            InstructionKind::StorageLive { local: local_idx } => {
+                let layout = self.layout_local(*local_idx);
+                let size = layout.size;
+                self.allocator_mut().mark_local_as_alive(*local_idx, layout);
+                self.sub_unchecked(
+                    X86Operand::register(X86Register::RSP),
+                    X86Operand::immediate(X86Immediate::QWord(size as i64)),
+                );
             }
             InstructionKind::StorageDead { local } => {
                 self.allocator_mut().mark_variable_as_dead(*local);
+                self.cleanup_stack();
             }
             InstructionKind::PlaceMention(_) => {}
         }
@@ -1275,10 +1296,10 @@ impl<'a> X86Codegen<'a> {
             }
             Some(local) => {
                 // todo: replace with push
-                let (stack_offset, block) = self.push(X86Operand::register(register));
-                self.allocator_mut().locals.insert(local, PlaceLocation::Stack(stack_offset));
+                let block = self.push(X86Operand::register(register));
+                self.allocator_mut().locals.insert(local, PlaceLocation::Stack(block));
                 self.allocator_mut().temp_registers.insert(register);
-                self.temps.insert(register, Temp::SavedReg(local, stack_offset, block));
+                self.temps.insert(register, Temp::SavedReg(local, block));
                 register
             }
         }
@@ -1290,7 +1311,7 @@ impl<'a> X86Codegen<'a> {
             None => {}
             Some(temp) => {
                 match temp {
-                    Temp::SavedReg(local, saved_value_offset, block) => {
+                    Temp::SavedReg(local,  block) => {
                         self.allocator_mut().locals.insert(local, PlaceLocation::Register(register));
                         self.allocator_mut().temp_registers.remove(&register);
                         self.temps.remove(&register);
@@ -1299,16 +1320,18 @@ impl<'a> X86Codegen<'a> {
                             self.pop(X86Operand::register(register));
                         } else {
                             self.allocator_mut().stack.free_block(block);
+                            let saved_value_offset = self.allocator().get_block_offset(block);
                             self.mov_unchecked(
                                 X86Operand::register(register),
                                 X86Operand::const_bp_offset(saved_value_offset, register.size()),
                             );
                         }
                     }
-                    Temp::SavedStack(local, offset) => {
-                        self.allocator_mut().locals.insert(local, PlaceLocation::Stack(offset));
+                    Temp::SavedStack(local, block) => {
+                        self.allocator_mut().locals.insert(local, PlaceLocation::Stack(block));
                         self.allocator_mut().temp_registers.remove(&register);
                         self.temps.remove(&register);
+                        let offset = self.allocator().get_block_offset(block);
                         self.mov_unchecked(
                             X86Operand::const_bp_offset(offset, register.size()),
                             X86Operand::register(register),
@@ -1357,8 +1380,9 @@ impl<'a> X86Codegen<'a> {
 
     fn ensure_local_in_register(&mut self, local_idx: LocalIdx) -> X86Register {
         match *self.allocator().get_location(&local_idx) {
-            PlaceLocation::Stack(offset) => {
+            PlaceLocation::Stack(block) => {
                 let local_layout = self.layout_local(local_idx);
+                let offset = self.allocator().get_block_offset(block);
                 let register = self.use_temp_reg(X86Size::from_layout(&local_layout));
                 self.mov_unchecked(X86Operand::register(register), X86Operand::const_bp_offset(offset,
                                                                                                X86Size::from_layout(&local_layout),
@@ -1366,7 +1390,7 @@ impl<'a> X86Codegen<'a> {
                 self.allocator_mut().locals.insert(local_idx, PlaceLocation::Register(register));
                 self.temps.insert(register, Temp::SavedStack(
                     local_idx,
-                    offset,
+                    block,
                 ));
                 self.allocator_mut().temp_registers.insert(register);
                 register
@@ -1419,10 +1443,10 @@ impl<'a> X86Codegen<'a> {
         self._push_instruction(X86Instruction::Call(name));
     }
 
-    fn push(&mut self, operand: X86Operand) -> (StackOffset, StackFrameBlockIdx) {
-        let val = self.allocator_mut().stack.push_block(operand.size.num_bytes());
+    fn push(&mut self, operand: X86Operand) -> StackFrameBlockIdx {
+        let block = self.allocator_mut().stack.push_block(operand.size.num_bytes());
         self._push_instruction(X86Instruction::Push(operand));
-        val
+        block
     }
 
     fn pop(&mut self, operand: X86Operand) {
@@ -1729,7 +1753,6 @@ impl<'a> X86Codegen<'a> {
             operand,
             X86Operand::register(store_at_reg),
         );
-        dbg!(&lhs_temps);
         self.free_temp_registers(&lhs_temps);
         self.free_temp_registers(&rhs_temps);
         self.free_temp_register(source);
@@ -1827,8 +1850,9 @@ impl<'a> X86Codegen<'a> {
         let local_layout = self.layout_local(place.local);
         let loc = self.allocator().get_location(&place.local);
         match *loc {
-            PlaceLocation::Stack(mut offset) => {
+            PlaceLocation::Stack(block) => {
                 let mut layout = local_layout;
+                let mut offset = self.allocator().get_block_offset(block);
                 if let Some(projection) = place.projection.clone() {
                     match projection {
                         Projection::Field(idx) => {
@@ -1853,7 +1877,6 @@ impl<'a> X86Codegen<'a> {
                         Projection::ConstantIndex(index) => {
                             let additional_offset = index * layout.size as u32;
                             offset.add_offset(additional_offset);
-
                         }
                         Projection::Deref => {
                             let temp_reg = self.use_temp_reg(

@@ -6,24 +6,8 @@ func main -> i64 {
     let mut i = 10
     while i > 0 {
         let msg = "Hello, world!"
-        let p = Program { text: msg }
-        if std::string::strcmp(msg, p.text) {
-            std::io::println("Strings are equal")
-        } else {
-            std::io::println("Strings are not equal")
-        }
-        std::io::println(p.text)
-        set_new_msg(&mut p.text)
-        std::io::println(p.text)
+        std::io::println(msg)
         i = i - 1
-    }
-    i = 10
-    while i > 0 {
-       let mut j = 1
-       while j < 2 {
-           std::io::println("Test")
-           j = j + 1
-       }
     }
     return i + 1
 }
