@@ -1242,8 +1242,17 @@ impl<'a> X86Codegen<'a> {
                 args,
                 function_id
             } => {
+                let scope = self.scope.borrow();
+                let function = scope.get_function(function_id);
+                let args = args.iter().zip(function.parameters.iter()).map(|(arg, param)| {
+                    let param = scope.get_variable(param);
+                    (arg, MIRType::from_type(&param.ty,&scope))
+                }).collect();
+
+                drop(scope);
                 let (used_regs, arg_size) = self.layout_function_call_args(args);
                 let scope = self.scope.borrow();
+
                 let function = scope.get_function(function_id);
                 let function_name = self.format_qualified_name(&function.name);
                 drop(scope);
@@ -1950,9 +1959,9 @@ impl<'a> X86Codegen<'a> {
         self.body().scope.locals.get(local)
     }
 
-    fn layout_function_call_args(&mut self, args: &Vec<Operand>) -> (Vec<X86Register>, u32) {
+    fn layout_function_call_args(&mut self, args: Vec<(&Operand, MIRType)>) -> (Vec<X86Register>, u32) {
         let mut arg_size = 0;
-        let arg_registers = [
+        let registers =[
             X86Register::RDI,
             X86Register::RSI,
             X86Register::RDX,
@@ -1960,8 +1969,14 @@ impl<'a> X86Codegen<'a> {
             X86Register::R8,
             X86Register::R9,
         ];
+        let arg_registers = args.iter().zip(
+            registers.iter()
+        ).map(|((_,ty),reg)| {
+            let size = X86Size::from_layout(&ty.layout());
+            reg.resize(&size)
+        }).collect::<Vec<_>>();
         let mut used_registers = Vec::new();
-        for (index, value) in args.iter().enumerate() {
+        for (index, (value,_)) in args.iter().enumerate() {
             let (operand, temps) = self.gen_operand_op(value);
             if index < arg_registers.len() {
                 let reg = self.use_specific_temp_reg(arg_registers[index]);
