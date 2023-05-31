@@ -785,7 +785,7 @@ impl Display for X86Operand {
                         }
                     }
                     X86AddressingMode::DataLabel(label) => {
-                        write!(f, "[rip + {}]", label)
+                        write!(f, "{}", label)
                     }
                 }
             }
