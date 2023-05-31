@@ -72,8 +72,8 @@ impl Ast {
         ASTStatement::new(ASTStatementKind::ModDecl(ASTModDeclStatement { mod_token: module_token, identifier }))
     }
 
-    pub fn number_expression(&mut self, token: Token, number: i64) -> ASTExpression {
-        ASTExpression::new(ASTExpressionKind::Number(ASTNumberExpression { number, token }))
+    pub fn number_expression(&mut self, token: Token, number: i64, ty: Option<Token>) -> ASTExpression {
+        ASTExpression::new(ASTExpressionKind::Number(ASTNumberExpression { number, token, size_specifier: ty }))
     }
 
     pub fn string_expression(&mut self, open_quote: Token, value: ASTString, close_quote: Token) -> ASTExpression {
@@ -888,6 +888,7 @@ pub struct ASTBinaryExpression {
 pub struct ASTNumberExpression {
     pub number: i64,
     pub token: Token,
+    pub size_specifier: Option<Token>,
 }
 
 #[derive(Debug, Clone)]

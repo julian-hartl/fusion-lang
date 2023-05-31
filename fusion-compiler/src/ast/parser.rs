@@ -469,7 +469,12 @@ impl<'a> Parser<'a> {
         let token = self.consume().clone();
         let expr = match token.kind {
             TokenKind::Number(number) => {
-                self.ast.number_expression(token, number)
+                let ty = if self.current().kind == TokenKind::Identifier {
+                    Some(self.consume_and_check(TokenKind::Identifier).clone())
+                } else {
+                    None
+                };
+                self.ast.number_expression(token, number, ty)
             }
             TokenKind::LeftParen => {
                 let expr = self.parse_expression();

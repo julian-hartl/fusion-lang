@@ -5,7 +5,7 @@ use crate::ast::lexer::TokenKind;
 use crate::hir::StructIdx;
 use crate::modules::scopes::GlobalScope;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionType {
     pub parameters: Vec<Type>,
     pub return_type: Box<Type>,
@@ -25,9 +25,30 @@ impl Display for SymbolKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Type {
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum IntSize {
+    I8,
+    I16,
+    I32,
     I64,
+    ISize,
+}
+
+impl Display for IntSize {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IntSize::I8 => write!(f, "i8"),
+            IntSize::I16 => write!(f, "i16"),
+            IntSize::I32 => write!(f, "i32"),
+            IntSize::I64 => write!(f, "i64"),
+            IntSize::ISize => write!(f, "isize"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Type {
+    Integer(IntSize),
     Bool,
     Char,
     Void,
@@ -36,6 +57,32 @@ pub enum Type {
     Function(FunctionType),
     Unresolved,
     Error,
+}
+
+
+impl Type {
+
+    pub fn get_integer_types() -> [Type; 4] {
+        return [
+            Type::Integer(IntSize::I8),
+            Type::Integer(IntSize::I16),
+            Type::Integer(IntSize::I32),
+            Type::Integer(IntSize::I64),
+        ]
+    }
+
+    pub fn get_built_in_types() -> [Type; 7] {
+        return [
+            Type::Integer(IntSize::I8),
+            Type::Integer(IntSize::I16),
+            Type::Integer(IntSize::I32),
+            Type::Integer(IntSize::I64),
+            Type::Bool,
+            Type::Char,
+            Type::Void,
+        ]
+    }
+
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -51,7 +98,7 @@ impl Layout {
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::I64 => write!(f, "i64"),
+            Type::Integer(size) => write!(f, "{}", size),
             Type::Bool => write!(f, "bool"),
             Type::Unresolved => write!(f, "unresolved"),
             Type::Void => write!(f, "void"),
@@ -104,7 +151,11 @@ impl Type {
 
     pub fn get_builtin_type(name: &str) -> Option<Type> {
         match name {
-            "i64" => Some(Type::I64),
+            "isize" => Some(Type::Integer(IntSize::ISize)),
+            "i64" => Some(Type::Integer(IntSize::I64)),
+            "i32" => Some(Type::Integer(IntSize::I32)),
+            "i16" => Some(Type::Integer(IntSize::I16)),
+            "i8" => Some(Type::Integer(IntSize::I8)),
             "bool" => Some(Type::Bool),
             "char" => Some(Type::Char),
             "void" => Some(Type::Void),
@@ -121,9 +172,27 @@ impl Type {
 
     pub fn layout(&self, scope: &GlobalScope) -> Layout {
         match self {
-            Type::I64 => Layout {
-                size: 8,
-                alignment: 8,
+            Type::Integer(size) => match size {
+                IntSize::I8 => Layout {
+                    size: 1,
+                    alignment: 1,
+                },
+                IntSize::I16 => Layout {
+                    size: 2,
+                    alignment: 2,
+                },
+                IntSize::I32 => Layout {
+                    size: 4,
+                    alignment: 4,
+                },
+                IntSize::I64 => Layout {
+                    size: 8,
+                    alignment: 8,
+                },
+                IntSize::ISize => Layout {
+                    size: Layout::POINTER_SIZE,
+                    alignment: Layout::POINTER_SIZE,
+                },
             },
             Type::Bool => Layout {
                 size: 1,

@@ -5,14 +5,14 @@ use fusion_compiler::{idx, Result};
 use fusion_compiler::Idx;
 
 use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIndexExpression, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, QualifiedIdentifier, TypeSyntax};
-use crate::ast::lexer::TokenKind;
+use crate::ast::lexer::{Token, TokenKind};
 use crate::ast::visitor::ASTVisitor;
 use crate::compilation::SourceTree;
 use crate::diagnostics::DiagnosticsBagCell;
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell, SymbolLookupResult};
 use crate::modules::symbols::{Function, ModuleIdx};
 use crate::text::span::TextSpan;
-use crate::typings::Type;
+use crate::typings::{IntSize, Type};
 
 mod visitor;
 mod visualization;
@@ -165,10 +165,31 @@ pub struct HIRLiteralExpression {
 
 #[derive(Debug)]
 pub enum HIRLiteralValue {
-    Integer(i64),
+    Integer(IntegerLiteralValue),
     Boolean(bool),
     String(String),
     Char(char),
+}
+
+#[derive(Debug)]
+pub enum IntegerLiteralValue {
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    ISize(isize),
+}
+
+impl Display for IntegerLiteralValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IntegerLiteralValue::I8(value) => write!(f, "{}", value),
+            IntegerLiteralValue::I16(value) => write!(f, "{}", value),
+            IntegerLiteralValue::I32(value) => write!(f, "{}", value),
+            IntegerLiteralValue::I64(value) => write!(f, "{}", value),
+            IntegerLiteralValue::ISize(value) => write!(f, "{}", value),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -212,66 +233,6 @@ impl Display for HIRBinaryOperator {
     }
 }
 
-pub trait HIRBinaryOperatorVisitor<T> {
-    fn visit_i64_add(&self) -> T;
-
-    fn visit_ptr_i64_add(&self, inner_type: &Type) -> T;
-
-    fn visit_char_add(&self) -> T;
-
-    fn visit_i64_subtract(&self) -> T;
-
-    fn visit_ptr_i64_subtract(&self, inner_type: &Type) -> T;
-
-
-    fn visit_char_subtract(&self) -> T;
-
-    fn visit_i64_multiply(&self) -> T;
-
-    fn visit_char_multiply(&self) -> T;
-
-    fn visit_i64_divide(&self) -> T;
-
-    fn visit_char_divide(&self) -> T;
-
-    fn visit_equals(&self, ty: &Type) -> T;
-
-    fn visit_not_equals(&self, ty: &Type) -> T;
-
-    fn visit_i64_less_than(&self) -> T;
-
-    fn visit_char_less_than(&self) -> T;
-
-    fn visit_i64_less_than_or_equal(&self) -> T;
-
-    fn visit_char_less_than_or_equal(&self) -> T;
-
-    fn visit_i64_greater_than(&self) -> T;
-
-    fn visit_char_greater_than(&self) -> T;
-
-    fn visit_i64_greater_than_or_equal(&self) -> T;
-
-    fn visit_char_greater_than_or_equal(&self) -> T;
-
-    fn visit_i64_bitwise_and(&self) -> T;
-
-    fn visit_char_bitwise_and(&self) -> T;
-
-    fn visit_i64_bitwise_or(&self) -> T;
-
-    fn visit_char_bitwise_or(&self) -> T;
-
-    fn visit_i64_bitwise_xor(&self) -> T;
-
-    fn visit_char_bitwise_xor(&self) -> T;
-
-    fn visit_i64_modulo(&self) -> T;
-
-    fn visit_char_modulo(&self) -> T;
-
-    fn visit_logical_and(&self) -> T;
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum HIRBinaryOperator {
@@ -292,153 +253,99 @@ pub enum HIRBinaryOperator {
     LogicalAnd,
 }
 
-
 impl HIRBinaryOperator {
-    pub fn visit<T, V>(&self, visitor: &V, left: &Type, right: &Type) -> Result<T> where V: HIRBinaryOperatorVisitor<T> {
+
+    pub fn get_type_table(&self) -> Vec<(Type, Type, Type)> {
         match self {
             HIRBinaryOperator::Add => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_add()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_add()),
-                    (Type::Ptr(inner, _), Type::I64) => Ok(visitor.visit_ptr_i64_add(&**inner)),
-                    (Type::I64, Type::Ptr(inner, _)) => Ok(visitor.visit_ptr_i64_add(
-                        &**inner
-                    )),
-                    _ => {
-                        Err(())
-                    }
-                }
+                let int_types = Self::get_arithmetic_types();
+                Vec::from(int_types)
             }
             HIRBinaryOperator::Subtract => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_subtract()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_subtract()),
-                    (Type::Ptr(inner, _), Type::I64) => Ok(visitor.visit_ptr_i64_subtract(&**inner)),
-                    (Type::I64, Type::Ptr(inner, _)) => Ok(visitor.visit_ptr_i64_subtract(
-                        &**inner
-                    )),
-                    _ => {
-                        Err(())
-                    }
-                }
+                let int_types = Self::get_arithmetic_types();
+                Vec::from(int_types)
             }
             HIRBinaryOperator::Multiply => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_multiply()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_multiply()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                let int_types = Self::get_arithmetic_types();
+                Vec::from(int_types)
             }
             HIRBinaryOperator::Divide => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_divide()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_divide()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                let int_types = Self::get_arithmetic_types();
+                Vec::from(int_types)
             }
             HIRBinaryOperator::Modulo => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_modulo()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_modulo()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                let int_types = Self::get_arithmetic_types();
+                Vec::from(int_types)
             }
             HIRBinaryOperator::Equals => {
-                match (left, right) {
-                    _ if left == right => Ok(visitor.visit_equals(left)),
-                    _ => {
-                        Err(())
-                    }
+                let built_in_types = Type::get_built_in_types();
+                let mut types = Vec::with_capacity(built_in_types.len());
+                for ty in built_in_types {
+                    types.push((ty.clone(), ty.clone(), Type::Bool));
                 }
+                types
             }
             HIRBinaryOperator::NotEquals => {
-                match (left, right) {
-                    _ if left == right => Ok(visitor.visit_not_equals(left)),
-                    _ => {
-                        Err(())
-                    }
+                let built_in_types = Type::get_built_in_types();
+                let mut types = Vec::with_capacity(built_in_types.len());
+                for ty in built_in_types {
+                    types.push((ty.clone(), ty.clone(), Type::Bool));
                 }
+                types
             }
             HIRBinaryOperator::LessThan => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_less_than()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_less_than()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                Self::get_number_comparison_types()
             }
             HIRBinaryOperator::LessThanOrEqual => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_less_than_or_equal()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_less_than_or_equal()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                Self::get_number_comparison_types()
             }
             HIRBinaryOperator::GreaterThan => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_greater_than()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_greater_than()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                Self::get_number_comparison_types()
             }
             HIRBinaryOperator::GreaterThanOrEqual => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_greater_than_or_equal()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_greater_than_or_equal()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                Self::get_number_comparison_types()
             }
             HIRBinaryOperator::BitwiseAnd => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_bitwise_and()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_bitwise_and()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                let int_types = Self::get_arithmetic_types();
+                Vec::from(int_types)
             }
             HIRBinaryOperator::BitwiseOr => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_bitwise_or()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_bitwise_or()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                let int_types = Self::get_arithmetic_types();
+                Vec::from(int_types)
             }
             HIRBinaryOperator::BitwiseXor => {
-                match (left, right) {
-                    (Type::I64, Type::I64) => Ok(visitor.visit_i64_bitwise_xor()),
-                    (Type::Char, Type::Char) => Ok(visitor.visit_char_bitwise_xor()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                let int_types = Self::get_arithmetic_types();
+                Vec::from(int_types)
             }
             HIRBinaryOperator::LogicalAnd => {
-                match (left, right) {
-                    (Type::Bool, Type::Bool) => Ok(visitor.visit_logical_and()),
-                    _ => {
-                        Err(())
-                    }
-                }
+                vec![
+                    (Type::Bool, Type::Bool, Type::Bool),
+                ]
             }
         }
     }
+
+    fn get_number_comparison_types() -> Vec<(Type, Type, Type)> {
+        let int_types = Type::get_integer_types();
+        let mut types = Vec::with_capacity(int_types.len());
+        for ty in int_types {
+            types.push((ty.clone(), ty.clone(), Type::Bool));
+        }
+        types
+    }
+
+    fn get_arithmetic_types() -> [(Type, Type, Type); 6] {
+        [
+            (Type::Integer(IntSize::I8), Type::Integer(IntSize::I8), Type::Integer(IntSize::I8)),
+            (Type::Integer(IntSize::I16), Type::Integer(IntSize::I16), Type::Integer(IntSize::I16)),
+            (Type::Integer(IntSize::I32), Type::Integer(IntSize::I32), Type::Integer(IntSize::I32)),
+            (Type::Integer(IntSize::I64), Type::Integer(IntSize::I64), Type::Integer(IntSize::I64)),
+            (Type::Integer(IntSize::ISize), Type::Integer(IntSize::ISize), Type::Integer(IntSize::ISize)),
+            (Type::Char, Type::Char, Type::Char),
+        ]
+    }
 }
+
 
 impl From<&ASTBinaryOperator> for HIRBinaryOperator {
     fn from(op: &ASTBinaryOperator) -> Self {
@@ -472,17 +379,36 @@ pub struct HIRUnaryExpression {
     pub operand: Box<HIRExpression>,
 }
 
-pub trait HIRUnaryOperatorVisitor<T> {
-    fn visit_boolean_negate(&self) -> T;
-    fn visit_i64_negate(&self) -> T;
-    fn visit_i64_bitwise_not(&self) -> T;
-    fn visit_char_bitwise_not(&self) -> T;
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HIRUnaryOperator {
     Negate,
     BitwiseNot,
+}
+
+impl HIRUnaryOperator {
+
+    pub fn get_type_table(&self) -> Vec<(Type, Type)> {
+        match self {
+            HIRUnaryOperator::Negate => {
+                let int_types = Type::get_integer_types();
+                let mut types = Vec::with_capacity(int_types.len());
+                for ty in int_types {
+                    types.push((ty.clone(), ty.clone()));
+                }
+                types
+            }
+            HIRUnaryOperator::BitwiseNot => {
+                let int_types = Type::get_integer_types();
+                let mut types = Vec::with_capacity(int_types.len());
+                for ty in int_types {
+                    types.push((ty.clone(), ty.clone()));
+                }
+                types
+            }
+        }
+    }
+
 }
 
 impl Display for HIRUnaryOperator {
@@ -504,26 +430,6 @@ impl From<&ASTUnaryOperator> for HIRUnaryOperator {
     }
 }
 
-impl HIRUnaryOperator {
-    fn visit<T, V: HIRUnaryOperatorVisitor<T>>(&self, visitor: &V, op: &Type) -> Result<T> {
-        match self {
-            HIRUnaryOperator::Negate => {
-                match op {
-                    Type::I64 => Ok(visitor.visit_i64_negate()),
-                    Type::Bool => Ok(visitor.visit_boolean_negate()),
-                    _ => Err(()),
-                }
-            }
-            HIRUnaryOperator::BitwiseNot => {
-                match op {
-                    Type::I64 => Ok(visitor.visit_i64_bitwise_not()),
-                    Type::Char => Ok(visitor.visit_char_bitwise_not()),
-                    _ => Err(()),
-                }
-            }
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct HIRCallExpression {
@@ -638,7 +544,7 @@ impl HIR {
             .push(stmt);
     }
 
-    pub fn functions<'a>(&self, scope: &'a GlobalScope) -> HashMap<&'a Function, Option<&Vec<HIRStatement>>> {
+    pub fn functions<'a>(&self, scope: &'a GlobalScope) -> Vec<(&'a Function, Option<&Vec<HIRStatement>>)> {
         scope.functions().indexed_iter().map(|(function_idx, function)| {
             let body = self.function_bodies.get(&function_idx);
             (function, body)
@@ -816,9 +722,54 @@ impl HIRGen {
     fn gen_expression(&mut self, expr: &ASTExpression) -> HIRExpression {
         let (kind, ty) = match &expr.kind {
             ASTExpressionKind::Number(expr) => {
-                let ty = Type::I64;
+                let size = match &expr.size_specifier {
+                    None => {
+                        IntSize::I32
+                    }
+                    Some(size_specifier) => {
+                        match size_specifier.span.literal.as_str() {
+                            "i8" => IntSize::I8,
+                            "i16" => IntSize::I16,
+                            "i32" => IntSize::I32,
+                            "i64" => IntSize::I64,
+                            "isize" => IntSize::ISize,
+                            _ => {
+                                self.diagnostics_bag.borrow_mut().report_invalid_integer_size(&size_specifier.span);
+                                IntSize::I32
+                            }
+                        }
+                    }
+                };
+                let is_in_range = match size {
+                    IntSize::I8 => expr.number <= i8::MAX as i64,
+                    IntSize::I16 => expr.number <= i16::MAX as i64,
+                    IntSize::I32 => expr.number <= i32::MAX as i64,
+                    IntSize::I64 => expr.number <= i64::MAX as i64,
+                    IntSize::ISize => expr.number <= isize::MAX as i64,
+                };
+                if !is_in_range {
+                    self.diagnostics_bag.borrow_mut().report_integer_literal_out_of_range(&expr.token.span);
+                }
+                let ty = Type::Integer(size);
+                let literal = match size {
+                    IntSize::I8 => {
+                        IntegerLiteralValue::I8(expr.number as i8)
+                    }
+                    IntSize::I16 => {
+                        IntegerLiteralValue::I16(expr.number as i16)
+                    }
+                    IntSize::I32 => {
+                        IntegerLiteralValue::I32(expr.number as i32)
+                    }
+                    IntSize::I64 => {
+                        IntegerLiteralValue::I64(expr.number as i64)
+                    }
+                    IntSize::ISize => {
+                        IntegerLiteralValue::ISize(expr.number as isize)
+                    }
+                };
                 let expr = HIRExpressionKind::Literal(HIRLiteralExpression {
-                    value: HIRLiteralValue::Integer(expr.number),
+                    value: HIRLiteralValue::Integer(literal),
                 });
                 (expr, ty)
             }
@@ -1099,7 +1050,7 @@ impl HIRGen {
             ASTExpressionKind::Index(expr) => {
                 let target = self.gen_expression(&expr.target);
                 let index = self.gen_expression(&expr.index);
-                self.ensure_type_match(&index.span, &index.ty, &Type::I64);
+                self.ensure_type_match(&index.span, &index.ty, &Type::Integer(IntSize::ISize));
                 let ty = match &target.ty {
                     Type::Ptr(inner, _) => {
                         *inner.clone()
@@ -1275,10 +1226,10 @@ impl HIRGen {
     }
 
     fn resolve_bin_op_ty(&self, span: &TextSpan, left: &Type, right: &Type, op: &HIRBinaryOperator) -> Type {
-        let result_type_visitor = ResultTypeVisitor;
-        match op.visit(&result_type_visitor, left, right) {
-            Ok(ty) => ty,
-            Err(_) => {
+        let table  = op.get_type_table();
+        match table.into_iter().find(|(l, r, _)| left.is_assignable_to(l) && right.is_assignable_to(r)) {
+            Some((_, _, ty)) => ty,
+            None => {
                 self.diagnostics_bag.borrow_mut().report_binary_operator_mismatch(span, left, right);
                 Type::Error
             }
@@ -1286,10 +1237,10 @@ impl HIRGen {
     }
 
     fn resolve_un_op_ty(&self, span: &TextSpan, operand: &Type, op: &HIRUnaryOperator) -> Type {
-        let result_type_visitor = ResultTypeVisitor;
-        match op.visit(&result_type_visitor, operand) {
-            Ok(ty) => ty,
-            Err(_) => {
+        let table  = op.get_type_table();
+        match table.into_iter().find(|(t, _)| operand.is_assignable_to(t)) {
+            Some((_, ty)) => ty,
+            None => {
                 self.diagnostics_bag.borrow_mut().report_unary_operator_mismatch(span, operand);
                 Type::Error
             }
@@ -1297,143 +1248,6 @@ impl HIRGen {
     }
 }
 
-struct ResultTypeVisitor;
-
-impl HIRUnaryOperatorVisitor<Type> for ResultTypeVisitor {
-    fn visit_boolean_negate(&self) -> Type {
-        Type::Bool
-    }
-
-    fn visit_i64_negate(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_i64_bitwise_not(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_char_bitwise_not(&self) -> Type {
-        Type::Char
-    }
-}
-
-impl HIRBinaryOperatorVisitor<Type> for ResultTypeVisitor {
-    fn visit_i64_add(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_ptr_i64_add(&self, inner: &Type) -> Type {
-        Type::Ptr(Box::new(inner.clone()), false)
-    }
-
-    fn visit_char_add(&self) -> Type {
-        Type::Char
-    }
-
-    fn visit_i64_subtract(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_ptr_i64_subtract(&self, inner_type: &Type) -> Type {
-        Type::Ptr(Box::new(inner_type.clone()), false)
-    }
-
-    fn visit_char_subtract(&self) -> Type {
-        Type::Char
-    }
-
-    fn visit_i64_multiply(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_char_multiply(&self) -> Type {
-        Type::Char
-    }
-
-    fn visit_i64_divide(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_char_divide(&self) -> Type {
-        Type::Char
-    }
-
-    fn visit_equals(&self, ty: &Type) -> Type {
-        Type::Bool
-    }
-
-    fn visit_not_equals(&self, ty: &Type) -> Type {
-        Type::Bool
-    }
-
-    fn visit_i64_less_than(&self) -> Type {
-        Type::Bool
-    }
-
-    fn visit_char_less_than(&self) -> Type {
-        Type::Bool
-    }
-
-    fn visit_i64_less_than_or_equal(&self) -> Type {
-        Type::Bool
-    }
-
-    fn visit_char_less_than_or_equal(&self) -> Type {
-        Type::Bool
-    }
-
-    fn visit_i64_greater_than(&self) -> Type {
-        Type::Bool
-    }
-
-    fn visit_char_greater_than(&self) -> Type {
-        Type::Bool
-    }
-
-    fn visit_i64_greater_than_or_equal(&self) -> Type {
-        Type::Bool
-    }
-
-    fn visit_char_greater_than_or_equal(&self) -> Type {
-        Type::Bool
-    }
-
-    fn visit_i64_bitwise_and(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_char_bitwise_and(&self) -> Type {
-        Type::Char
-    }
-
-    fn visit_i64_bitwise_or(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_char_bitwise_or(&self) -> Type {
-        Type::Char
-    }
-
-    fn visit_i64_bitwise_xor(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_char_bitwise_xor(&self) -> Type {
-        Type::Char
-    }
-
-    fn visit_i64_modulo(&self) -> Type {
-        Type::I64
-    }
-
-    fn visit_char_modulo(&self) -> Type {
-        Type::Char
-    }
-
-    fn visit_logical_and(&self) -> Type {
-        Type::Bool
-    }
-}
 
 // todo: remove this and gather symbols during parsing
 struct HIRGlobalSymbolGatherer<'a> {

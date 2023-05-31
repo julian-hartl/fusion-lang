@@ -10,12 +10,12 @@ use std::rc::Rc;
 use fusion_compiler::{idx, Idx, IdxVec};
 
 use crate::diagnostics::DiagnosticsBagCell;
-use crate::hir::{FieldIdx, FunctionIdx, HIR, HIRBinaryOperator, HIRCallee, HIRExpression, HIRExpressionKind, HIRFunction, HIRGlobal, HIRLiteralExpression, HIRLiteralValue, HIRStatement, HIRStatementKind, HIRUnaryOperator, VariableIdx};
+use crate::hir::{FieldIdx, FunctionIdx, HIR, HIRBinaryOperator, HIRCallee, HIRExpression, HIRExpressionKind, HIRFunction, HIRGlobal, HIRLiteralExpression, HIRLiteralValue, HIRStatement, HIRStatementKind, HIRUnaryOperator, IntegerLiteralValue, VariableIdx};
 use crate::mir::Category::RValue;
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
 use crate::modules::symbols::Function;
 use crate::text::span::TextSpan;
-use crate::typings::{Layout, Type};
+use crate::typings::{IntSize, Layout, Type};
 
 idx!(BasicBlockIdx);
 
@@ -398,9 +398,10 @@ impl Display for Place {
 }
 
 
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum MIRType {
-    I64,
+    Integer(IntSize),
     Bool,
     Char,
     Struct(Vec<MIRType>),
@@ -411,7 +412,7 @@ pub enum MIRType {
 impl MIRType {
     pub fn from_type(ty: &Type, global_scope: &GlobalScope) -> Self {
         match ty {
-            Type::I64 => MIRType::I64,
+            Type::Integer(size) => MIRType::Integer(*size),
             Type::Bool => MIRType::Bool,
             Type::Char => MIRType::Char,
             Type::Void => MIRType::Void,
@@ -441,12 +442,28 @@ impl MIRType {
 
     pub fn layout(&self) -> Layout {
         match self {
-            MIRType::I64 => {
-                Layout {
+            MIRType::Integer(size) => match size {
+                IntSize::I8 => Layout {
+                    size: 1,
+                    alignment: 1,
+                },
+                IntSize::I16 => Layout {
+                    size: 2,
+                    alignment: 2,
+                },
+                IntSize::I32 => Layout {
+                    size: 4,
+                    alignment: 4,
+                },
+                IntSize::I64 => Layout {
                     size: 8,
                     alignment: 8,
-                }
-            }
+                },
+                IntSize::ISize => Layout {
+                    size: 8,
+                    alignment: 8,
+                },
+            },
             MIRType::Bool => {
                 Layout {
                     size: 1,
@@ -503,8 +520,8 @@ impl MIRType {
 impl Display for MIRType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            MIRType::I64 => {
-                write!(f, "i64")
+            MIRType::Integer(size) => {
+                write!(f, "{}", size)
             }
             MIRType::Bool => {
                 write!(f, "bool")
@@ -543,7 +560,35 @@ impl Scalar {
         }
     }
 
+    pub fn from_i8(data: i8) -> Self {
+        Self {
+            data: data as u64,
+            size: 1,
+        }
+    }
+
+    pub fn from_i16(data: i16) -> Self {
+        Self {
+            data: data as u64,
+            size: 2,
+        }
+    }
+
+    pub fn from_i32(data: i32) -> Self {
+        Self {
+            data: data as u64,
+            size: 4,
+        }
+    }
+
     pub fn from_i64(data: i64) -> Self {
+        Self {
+            data: data as u64,
+            size: 8,
+        }
+    }
+
+    pub fn from_isize(data: isize) -> Self {
         Self {
             data: data as u64,
             size: 8,
@@ -1182,7 +1227,16 @@ impl BodyGen {
             HIRExpressionKind::Literal(lit_expr) => {
                 match &lit_expr.value {
                     HIRLiteralValue::Integer(value) =>
-                        ConstantValue::Scalar(Scalar::from_i64(*value)),
+                        {
+                            let scalar = match value {
+                                IntegerLiteralValue::I8(value) => Scalar::from_i8(*value),
+                                IntegerLiteralValue::I16(value) => Scalar::from_i16(*value),
+                                IntegerLiteralValue::I32(value) => Scalar::from_i32(*value),
+                                IntegerLiteralValue::I64(value) => Scalar::from_i64(*value),
+                                IntegerLiteralValue::ISize(value) => Scalar::from_isize(*value),
+                            };
+                            ConstantValue::Scalar(scalar)
+                        }
 
                     HIRLiteralValue::Boolean(value) =>
                         ConstantValue::Scalar(Scalar::from_bool(*value)),

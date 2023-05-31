@@ -254,6 +254,14 @@ impl DiagnosticsBag {
     pub fn report_cannot_assign_to_immutable_index(&mut self, span: &TextSpan) {
         self.report_error(format!("Cannot assign to immutable index '{}'", span.literal), span.clone());
     }
+
+    pub fn report_invalid_integer_size(&mut self, span: &TextSpan) {
+        self.report_error(format!("Invalid integer size specifier '{}'", span.literal), span.clone());
+    }
+
+    pub fn report_integer_literal_out_of_range(&mut self, span: &TextSpan) {
+        self.report_error(format!("Integer literal '{}' out of range", span.literal), span.clone());
+    }
 }
 
 #[cfg(test)]

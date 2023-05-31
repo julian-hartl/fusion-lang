@@ -1,5 +1,5 @@
 
-func main -> i64 {
+func main -> i32 {
     let mut i = 10
     while i > 0 {
         std::io::println("Hello, world!");
@@ -11,12 +11,24 @@ func main -> i64 {
             i = i - 1
     }
     let f = Foo { x: 10, y: 20 }
-    return f.x
+    if is_zero(f.x) {
+        std::io::println("x is zero")
+    } else {
+        std::io::println("x is not zero")
+    }
+    return add(f.x, f.y)
 }
 
 struct Foo {
-    x: i64,
-    y: i64,
+    x: i32,
+    y: i32
 }
 
+func add(a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+func is_zero(a: i32) -> bool {
+    return a == 0
+}
 

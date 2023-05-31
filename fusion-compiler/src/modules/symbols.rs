@@ -30,14 +30,14 @@ impl Display for QualifiedName {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Variable {
     pub name: String,
     pub ty: Type,
     pub is_mutable: bool,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Function {
     pub name: QualifiedName,
     pub parameters: Vec<VariableIdx>,
@@ -82,7 +82,7 @@ impl Struct {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct StructField {
     pub name: String,
     pub ty: Type,
