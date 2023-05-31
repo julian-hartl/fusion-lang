@@ -785,7 +785,7 @@ impl Display for X86Operand {
                         }
                     }
                     X86AddressingMode::DataLabel(label) => {
-                        write!(f, "{}", label)
+                        write!(f, "[{}]", label)
                     }
                 }
             }
@@ -1969,6 +1969,7 @@ impl<'a> X86Codegen<'a> {
             X86Register::R8,
             X86Register::R9,
         ];
+        assert!(args.len() <= registers.len());
         let arg_registers = args.iter().zip(
             registers.iter()
         ).map(|((_,ty),reg)| {
