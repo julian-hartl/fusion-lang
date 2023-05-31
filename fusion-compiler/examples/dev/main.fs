@@ -10,7 +10,13 @@ func main -> i64 {
             std::io::println("Hello, world!");
             i = i - 1
     }
-    return std::string::strlen("Hello, world!");
+    let f = Foo { x: 10, y: 20 }
+    return f.x
+}
+
+struct Foo {
+    x: i64,
+    y: i64,
 }
 
 
