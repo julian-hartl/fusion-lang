@@ -19,13 +19,22 @@ func main -> i32 {
     let a = 10
     let b = 10
     let c = 10;
-    add(a, b) + c
+    do_stuff(a, b) + c
     return c
 }
 
 struct Foo {
     x: i32,
     y: i32
+}
+
+func do_stuff(a: i32, b: i32) -> i32 {
+    let a = 10
+    let b = 10
+    let c = 20
+    let d = 100
+    let e = 200
+    return e
 }
 
 func add(a: i32, b: i32) -> i32 {
