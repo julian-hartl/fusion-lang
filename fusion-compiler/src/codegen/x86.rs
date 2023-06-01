@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::arch::asm;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
@@ -248,7 +249,7 @@ struct MemoryLocationAllocator {
     parameters: Vec<LocalIdx>,
     stack: StackFrame,
     alive_locals: HashSet<LocalIdx>,
-    temp_registers: HashSet<X86Register>,
+    temp_registers: HashSet<RegisterIdx>,
 }
 
 impl MemoryLocationAllocator {
@@ -388,7 +389,7 @@ impl MemoryLocationAllocator {
     }
 
     fn is_register_free(&self, register: X86Register) -> bool {
-        let is_used_as_temp = self.temp_registers.iter().any(|r| register.is_same_register(r));
+        let is_used_as_temp = self.temp_registers.iter().any(|r| register.index() == *r);
         let is_used_by_alive_local = self.is_register_used(register);
         !is_used_as_temp && !is_used_by_alive_local
     }
@@ -425,7 +426,7 @@ impl MemoryLocationAllocator {
 idx!(RegisterIdx);
 
 
-#[derive(Debug, Copy, Clone,PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(u8)]
 enum X86Register {
     // 8-bit
@@ -540,9 +541,9 @@ impl X86Register {
     pub fn index(&self) -> RegisterIdx {
         let raw_index = match self {
             X86Register::AL | X86Register::AH | X86Register::AX | X86Register::EAX | X86Register::RAX => 0,
-            X86Register::BL | X86Register::BH |  X86Register::BX | X86Register::EBX | X86Register::RBX => 1,
-            X86Register::CL |  X86Register::CH | X86Register::CX | X86Register::ECX | X86Register::RCX => 2,
-            X86Register::DL |  X86Register::DH | X86Register::DX | X86Register::EDX | X86Register::RDX => 3,
+            X86Register::BL | X86Register::BH | X86Register::BX | X86Register::EBX | X86Register::RBX => 1,
+            X86Register::CL | X86Register::CH | X86Register::CX | X86Register::ECX | X86Register::RCX => 2,
+            X86Register::DL | X86Register::DH | X86Register::DX | X86Register::EDX | X86Register::RDX => 3,
             X86Register::SIL | X86Register::SI | X86Register::ESI | X86Register::RSI => 4,
             X86Register::DIL | X86Register::DI | X86Register::EDI | X86Register::RDI => 5,
             X86Register::BPL | X86Register::BP | X86Register::EBP | X86Register::RBP => 6,
@@ -561,7 +562,7 @@ impl X86Register {
 
     pub fn resize(self, size: &X86Size) -> X86Register {
         let index = self.index().as_idx();
-        match size {
+        let resized = match size {
             X86Size::Byte =>
                 GENERAL_PURPOSE_REGS_8_BIT[index],
             X86Size::Word =>
@@ -570,7 +571,10 @@ impl X86Register {
                 GENERAL_PURPOSE_REGS_32_BIT[index],
             X86Size::QWord =>
                 GENERAL_PURPOSE_REGS_64_BIT[index],
-        }
+        };
+        assert_eq!(resized.size(), *size);
+        assert_eq!(resized.index(), self.index());
+        resized
     }
 
     /// Returns true if the register uses the same physical register as the other register.
@@ -988,8 +992,8 @@ enum PlaceLocation {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Temp {
-    SavedReg(LocalIdx, StackFrameBlockIdx),
-    SavedStack(LocalIdx, StackFrameBlockIdx),
+    SavedReg(LocalIdx, StackFrameBlockIdx, X86Register),
+    SavedStack(LocalIdx, StackFrameBlockIdx, X86Register),
 }
 
 pub struct X86Codegen<'a> {
@@ -1000,7 +1004,7 @@ pub struct X86Codegen<'a> {
     labels: IdxVec<LabelIdx, Label>,
     global_labels: IdxVec<GlobalLabelIdx, GlobalLabel>,
     current_body: Option<&'a Body>,
-    temps: HashMap<X86Register, Temp>,
+    temps: HashMap<RegisterIdx, Temp>,
 }
 
 impl<'a> X86Codegen<'a> {
@@ -1138,7 +1142,16 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn clear_stack_frame(&mut self) {
-        self.free_temp_registers(&self.temps.iter().map(|(reg, _)| *reg).collect());
+        self.free_temp_registers(&self.temps.iter().map(|(_, temp)| {
+            match temp {
+                Temp::SavedReg(_, _, reg) => {
+                    *reg
+                }
+                Temp::SavedStack(_, _, reg) => {
+                    *reg
+                }
+            }
+        }).collect());
         self.mov_unchecked(
             X86Operand::register(X86Register::RSP),
             X86Operand::register(X86Register::RBP),
@@ -1243,7 +1256,7 @@ impl<'a> X86Codegen<'a> {
                 let function = scope.get_function(function_id);
                 let args = args.iter().zip(function.parameters.iter()).map(|(arg, param)| {
                     let param = scope.get_variable(param);
-                    (arg, MIRType::from_type(&param.ty,&scope))
+                    (arg, MIRType::from_type(&param.ty, &scope))
                 }).collect();
 
                 drop(scope);
@@ -1312,11 +1325,11 @@ impl<'a> X86Codegen<'a> {
                 register
             }
             Some(local) => {
-                // todo: replace with push
-                let block = self.push(X86Operand::register(register));
+                let reg_to_save = register.resize(&X86Size::QWord);
+                let block = self.push(X86Operand::register(reg_to_save));
                 self.allocator_mut().locals.insert(local, PlaceLocation::Stack(block));
-                self.allocator_mut().temp_registers.insert(register);
-                self.temps.insert(register, Temp::SavedReg(local, block));
+                self.allocator_mut().temp_registers.insert(reg_to_save.index());
+                self.temps.insert(register.index(), Temp::SavedReg(local, block, reg_to_save));
                 register
             }
         }
@@ -1324,30 +1337,30 @@ impl<'a> X86Codegen<'a> {
 
     fn free_temp_register(&mut self, register: X86Register) {
         // todo: develop algorithm to check if we can free place on the stack every time we operate on it
-        match self.temps.get(&register).copied() {
+        match self.temps.get(&register.index()).copied() {
             None => {}
             Some(temp) => {
                 match temp {
-                    Temp::SavedReg(local, block) => {
+                    Temp::SavedReg(local, block, reg_to_restore) => {
                         self.allocator_mut().locals.insert(local, PlaceLocation::Register(register));
-                        self.allocator_mut().temp_registers.remove(&register);
-                        self.temps.remove(&register);
+                        self.allocator_mut().temp_registers.remove(&reg_to_restore.index());
+                        self.temps.remove(&register.index());
                         let is_on_top = self.allocator().stack.blocks.iter().last().map(|last_block| last_block.idx == block).unwrap_or(false);
                         if is_on_top {
-                            self.pop(X86Operand::register(register));
+                            self.pop(X86Operand::register(reg_to_restore));
                         } else {
                             self.allocator_mut().stack.free_block(block);
                             let saved_value_offset = self.allocator().get_block_offset(block);
                             self.mov_unchecked(
-                                X86Operand::register(register),
-                                X86Operand::const_bp_offset(saved_value_offset, register.size()),
+                                X86Operand::register(reg_to_restore),
+                                X86Operand::const_bp_offset(saved_value_offset, reg_to_restore.size()),
                             );
                         }
                     }
-                    Temp::SavedStack(local, block) => {
+                    Temp::SavedStack(local, block, stored_in_reg) => {
                         self.allocator_mut().locals.insert(local, PlaceLocation::Stack(block));
-                        self.allocator_mut().temp_registers.remove(&register);
-                        self.temps.remove(&register);
+                        self.allocator_mut().temp_registers.remove(&register.index());
+                        self.temps.remove(&register.index());
                         let offset = self.allocator().get_block_offset(block);
                         self.mov_unchecked(
                             X86Operand::const_bp_offset(offset, register.size()),
@@ -1405,11 +1418,12 @@ impl<'a> X86Codegen<'a> {
                                                                                                X86Size::from_layout(&local_layout),
                 ));
                 self.allocator_mut().locals.insert(local_idx, PlaceLocation::Register(register));
-                self.temps.insert(register, Temp::SavedStack(
+                self.temps.insert(register.index(), Temp::SavedStack(
                     local_idx,
                     block,
+                    register,
                 ));
-                self.allocator_mut().temp_registers.insert(register);
+                self.allocator_mut().temp_registers.insert(register.index());
                 register
             }
             PlaceLocation::Register(reg) => {
@@ -1461,12 +1475,24 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn push(&mut self, operand: X86Operand) -> StackFrameBlockIdx {
+        match &operand.mode {
+            X86AddressingMode::Register(reg) => {
+                assert_eq!(reg.size(), X86Size::QWord, "In X86_64, push only supports 64 bit registers");
+            }
+            _ => {}
+        };
         let block = self.allocator_mut().stack.push_block(operand.size.num_bytes());
         self._push_instruction(X86Instruction::Push(operand));
         block
     }
 
     fn pop(&mut self, operand: X86Operand) {
+        match &operand.mode {
+            X86AddressingMode::Register(reg) => {
+                assert_eq!(reg.size(), X86Size::QWord, "In X86_64, pop only supports 64 bit registers");
+            }
+            _ => {}
+        };
         self.allocator_mut().stack.pop_block();
         self._push_instruction(X86Instruction::Pop(operand));
     }
@@ -1958,7 +1984,7 @@ impl<'a> X86Codegen<'a> {
 
     fn layout_function_call_args(&mut self, args: Vec<(&Operand, MIRType)>) -> (Vec<X86Register>, u32) {
         let mut arg_size = 0;
-        let registers =[
+        let registers = [
             X86Register::RDI,
             X86Register::RSI,
             X86Register::RDX,
@@ -1969,12 +1995,12 @@ impl<'a> X86Codegen<'a> {
         assert!(args.len() <= registers.len());
         let arg_registers = args.iter().zip(
             registers.iter()
-        ).map(|((_,ty),reg)| {
+        ).map(|((_, ty), reg)| {
             let size = X86Size::from_layout(&ty.layout());
             reg.resize(&size)
         }).collect::<Vec<_>>();
         let mut used_registers = Vec::new();
-        for (index, (value,_)) in args.iter().enumerate() {
+        for (index, (value, _)) in args.iter().enumerate() {
             let (operand, temps) = self.gen_operand_op(value);
             if index < arg_registers.len() {
                 let reg = self.use_specific_temp_reg(arg_registers[index]);
