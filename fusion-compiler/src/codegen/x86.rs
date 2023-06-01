@@ -228,31 +228,7 @@ impl RegisterColor {
     }
 
     pub fn from_register(register: X86Register) -> Self {
-        for (i, reg) in GENERAL_PURPOSE_REGS_64_BIT.iter().enumerate() {
-            if *reg == register {
-                return RegisterColor::new(i as u8);
-            }
-        }
-
-        for (i, reg) in GENERAL_PURPOSE_REGS_32_BIT.iter().enumerate() {
-            if *reg == register {
-                return RegisterColor::new(i as u8);
-            }
-        }
-
-        for (i, reg) in GENERAL_PURPOSE_REGS_16_BIT.iter().enumerate() {
-            if *reg == register {
-                return RegisterColor::new(i as u8);
-            }
-        }
-
-        for (i, reg) in GENERAL_PURPOSE_REGS_8_BIT.iter().enumerate() {
-            if *reg == register {
-                return RegisterColor::new(i as u8);
-            }
-        }
-
-        panic!("Register {:?} is not a general purpose register", register);
+        RegisterColor::new(register.index().as_idx() as u8)
     }
 
     pub fn into_register(self, size: X86Size) -> X86Register {
@@ -412,20 +388,15 @@ impl MemoryLocationAllocator {
     }
 
     fn is_register_free(&self, register: X86Register) -> bool {
-        let index = register.index();
-        let registers_to_consider = [
-            &GENERAL_PURPOSE_REGS_8_BIT[index],
-            &GENERAL_PURPOSE_REGS_16_BIT[index],
-            &GENERAL_PURPOSE_REGS_32_BIT[index],
-            &GENERAL_PURPOSE_REGS_64_BIT[index],
-        ];
-        registers_to_consider.iter().all(|r| !self.temp_registers.contains(r) && !self.is_register_used(**r))
+        let is_used_as_temp = self.temp_registers.iter().any(|r| register.is_same_register(r));
+        let is_used_by_alive_local = self.is_register_used(register);
+        !is_used_as_temp && !is_used_by_alive_local
     }
 
     fn is_register_used(&self, register: X86Register) -> bool {
         self.alive_locals.iter().any(|var| {
             if let Some(PlaceLocation::Register(r)) = self.locals.get(var) {
-                *r == register
+                register.is_same_register(r)
             } else {
                 false
             }
@@ -451,8 +422,10 @@ impl MemoryLocationAllocator {
     }
 }
 
+idx!(RegisterIdx);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+
+#[derive(Debug, Copy, Clone,PartialEq, Eq, Hash)]
 #[repr(u8)]
 enum X86Register {
     // 8-bit
@@ -564,13 +537,30 @@ impl X86Register {
         }
     }
 
-    pub fn index(&self) -> usize {
-        Self::get_register_list(self.size()).iter()
-            .enumerate().find(|(_, r)| *r == self).map(|(i, _)| i).expect("Register not found in register list")
+    pub fn index(&self) -> RegisterIdx {
+        let raw_index = match self {
+            X86Register::AL | X86Register::AH | X86Register::AX | X86Register::EAX | X86Register::RAX => 0,
+            X86Register::BL | X86Register::BH |  X86Register::BX | X86Register::EBX | X86Register::RBX => 1,
+            X86Register::CL |  X86Register::CH | X86Register::CX | X86Register::ECX | X86Register::RCX => 2,
+            X86Register::DL |  X86Register::DH | X86Register::DX | X86Register::EDX | X86Register::RDX => 3,
+            X86Register::SIL | X86Register::SI | X86Register::ESI | X86Register::RSI => 4,
+            X86Register::DIL | X86Register::DI | X86Register::EDI | X86Register::RDI => 5,
+            X86Register::BPL | X86Register::BP | X86Register::EBP | X86Register::RBP => 6,
+            X86Register::SPL | X86Register::SP | X86Register::ESP | X86Register::RSP => 7,
+            X86Register::R8B | X86Register::R8W | X86Register::R8D | X86Register::R8 => 8,
+            X86Register::R9B | X86Register::R9W | X86Register::R9D | X86Register::R9 => 9,
+            X86Register::R10B | X86Register::R10W | X86Register::R10D | X86Register::R10 => 10,
+            X86Register::R11B | X86Register::R11W | X86Register::R11D | X86Register::R11 => 11,
+            X86Register::R12B | X86Register::R12W | X86Register::R12D | X86Register::R12 => 12,
+            X86Register::R13B | X86Register::R13W | X86Register::R13D | X86Register::R13 => 13,
+            X86Register::R14B | X86Register::R14W | X86Register::R14D | X86Register::R14 => 14,
+            X86Register::R15B | X86Register::R15W | X86Register::R15D | X86Register::R15 => 15,
+        };
+        RegisterIdx::new(raw_index)
     }
 
     pub fn resize(self, size: &X86Size) -> X86Register {
-        let index = self.index();
+        let index = self.index().as_idx();
         match size {
             X86Size::Byte =>
                 GENERAL_PURPOSE_REGS_8_BIT[index],
@@ -581,6 +571,13 @@ impl X86Register {
             X86Size::QWord =>
                 GENERAL_PURPOSE_REGS_64_BIT[index],
         }
+    }
+
+    /// Returns true if the register uses the same physical register as the other register.
+    /// E.g. `RAX` and `EAX` are the same physical register.
+    /// `RAX` and `RBX` are not the same physical register.
+    pub fn is_same_register(&self, other: &X86Register) -> bool {
+        self.index() == other.index()
     }
 }
 
@@ -1306,7 +1303,7 @@ impl<'a> X86Codegen<'a> {
                     false
                 }
                 PlaceLocation::Register(local_reg) => {
-                    *local_reg == register
+                    register.is_same_register(local_reg)
                 }
             }
         ).copied();
