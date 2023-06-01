@@ -529,6 +529,31 @@ impl X86Register {
         }
     }
 
+    pub fn caller_saved() -> &'static [X86Register] {
+        &[
+            X86Register::RAX,
+            X86Register::RCX,
+            X86Register::RDX,
+            X86Register::RSI,
+            X86Register::RDI,
+            X86Register::R8,
+            X86Register::R9,
+            X86Register::R10,
+            X86Register::R11,
+        ]
+    }
+
+    pub fn callee_saved() -> &'static [X86Register] {
+        &[
+            X86Register::RBX,
+            X86Register::RBP,
+            X86Register::R12,
+            X86Register::R13,
+            X86Register::R14,
+            X86Register::R15,
+        ]
+    }
+
     pub fn get_register_list(size: X86Size) -> &'static [X86Register; GENERAL_PURPOSE_REGISTER_COUNT] {
         match size {
             X86Size::QWord => GENERAL_PURPOSE_REGS_64_BIT,
@@ -1260,6 +1285,7 @@ impl<'a> X86Codegen<'a> {
                 }).collect();
 
                 drop(scope);
+                let caller_saved_regs = self.save_caller_saved_registers();
                 let (used_regs, arg_size) = self.layout_function_call_args(args);
                 let scope = self.scope.borrow();
 
@@ -1273,6 +1299,7 @@ impl<'a> X86Codegen<'a> {
                 //     X86Operand::immediate(X86Immediate::QWord(arg_size as i64)),
                 // );
                 // todo: for now we assume that each function returns its value in rax
+                self.free_temp_registers(&caller_saved_regs);
                 self.free_temp_registers(&used_regs);
                 let (return_value_operand, temps) = self.get_operand_for_place(return_value_place);
                 let size = return_value_operand.size;
@@ -2003,12 +2030,11 @@ impl<'a> X86Codegen<'a> {
         for (index, (value, _)) in args.iter().enumerate() {
             let (operand, temps) = self.gen_operand_op(value);
             if index < arg_registers.len() {
-                let reg = self.use_specific_temp_reg(arg_registers[index]);
+                let register = arg_registers[index];
                 self.mov_unchecked(
-                    X86Operand::register(reg),
+                    X86Operand::register(register),
                     operand,
                 );
-                used_registers.push(reg);
             } else {
                 arg_size += operand.size.num_bytes();
                 self.push(operand);
@@ -2016,6 +2042,14 @@ impl<'a> X86Codegen<'a> {
             used_registers.extend(temps);
         }
         (used_registers, arg_size)
+    }
+
+    fn save_caller_saved_registers(&mut self) -> Vec<X86Register> {
+        let regs = X86Register::caller_saved().to_vec();
+        for reg in &regs {
+            self.use_specific_temp_reg(*reg);
+        }
+        regs
     }
 
     fn _push_instruction(&mut self, instruction: X86Instruction) {
