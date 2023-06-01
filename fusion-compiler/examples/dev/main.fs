@@ -16,7 +16,11 @@ func main -> i32 {
     } else {
         std::io::println("x is not zero")
     }
-    return add(f.x, f.y)
+    let a = 10
+    let b = 10
+    let c = 10;
+    add(a, b) + c
+    return c
 }
 
 struct Foo {
