@@ -340,6 +340,7 @@ impl MemoryLocationAllocator {
                 Some(color) => {
                     let size = X86Size::from(&local_layout);
                     let register = color.into_register(size);
+                    assert_eq!(register.size(), size);
                     self.use_mapped_register(local_idx, register);
                 }
                 None => {}
@@ -386,6 +387,16 @@ impl MemoryLocationAllocator {
             }
             PlaceLocation::Register(_) => {}
         }
+    }
+
+    pub fn get_alive_registers(&self) -> Vec<X86Register> {
+        let mut registers = vec![];
+        for local in self.alive_locals.iter() {
+            if let Some(PlaceLocation::Register(r)) = self.locals.get(local) {
+                registers.push(*r);
+            }
+        }
+        registers
     }
 
     fn is_register_free(&self, register: X86Register) -> bool {
@@ -1017,8 +1028,8 @@ enum PlaceLocation {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Temp {
-    SavedReg(LocalIdx, StackFrameBlockIdx, X86Register),
-    SavedStack(LocalIdx, StackFrameBlockIdx, X86Register),
+    SavedReg { local: LocalIdx, saved_at: StackFrameBlockIdx, saved_reg: X86Register, original_reg: X86Register },
+    SavedStack { local: LocalIdx, saved_stack_block: StackFrameBlockIdx, saved_at: X86Register },
 }
 
 pub struct X86Codegen<'a> {
@@ -1029,7 +1040,7 @@ pub struct X86Codegen<'a> {
     labels: IdxVec<LabelIdx, Label>,
     global_labels: IdxVec<GlobalLabelIdx, GlobalLabel>,
     current_body: Option<&'a Body>,
-    temps: HashMap<RegisterIdx, Temp>,
+    saved_values: HashMap<RegisterIdx, Temp>,
 }
 
 impl<'a> X86Codegen<'a> {
@@ -1045,7 +1056,7 @@ impl<'a> X86Codegen<'a> {
             labels: IdxVec::new(),
             current_body: None,
             global_labels: IdxVec::new(),
-            temps: HashMap::new(),
+            saved_values: HashMap::new(),
         }
     }
 
@@ -1119,7 +1130,7 @@ impl<'a> X86Codegen<'a> {
         for bb in body.basic_blocks.indexed_iter() {
             self.gen_basic_block(bb);
         }
-        self.temps.clear();
+        self.saved_values.clear();
     }
 
     fn create_memory_location_allocator(&mut self, body: &'a Body) {
@@ -1167,12 +1178,12 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn clear_stack_frame(&mut self) {
-        self.free_temp_registers(&self.temps.iter().map(|(_, temp)| {
+        self.free_temp_registers(&self.saved_values.iter().map(|(_, temp)| {
             match temp {
-                Temp::SavedReg(_, _, reg) => {
-                    *reg
+                Temp::SavedReg { local: _, saved_at: _, saved_reg: _, original_reg } => {
+                    *original_reg
                 }
-                Temp::SavedStack(_, _, reg) => {
+                Temp::SavedStack { local: _, saved_stack_block: _, saved_at: reg } => {
                     *reg
                 }
             }
@@ -1286,7 +1297,7 @@ impl<'a> X86Codegen<'a> {
 
                 drop(scope);
                 let caller_saved_regs = self.save_caller_saved_registers();
-                let (used_regs, arg_size) = self.layout_function_call_args(args);
+                let temp_arg_regs = self.layout_function_call_args(args);
                 let scope = self.scope.borrow();
 
                 let function = scope.get_function(function_id);
@@ -1299,8 +1310,8 @@ impl<'a> X86Codegen<'a> {
                 //     X86Operand::immediate(X86Immediate::QWord(arg_size as i64)),
                 // );
                 // todo: for now we assume that each function returns its value in rax
+                self.free_temp_registers(&temp_arg_regs);
                 self.free_temp_registers(&caller_saved_regs);
-                self.free_temp_registers(&used_regs);
                 let (return_value_operand, temps) = self.get_operand_for_place(return_value_place);
                 let size = return_value_operand.size;
                 self.mov_unchecked(
@@ -1333,45 +1344,54 @@ impl<'a> X86Codegen<'a> {
     fn use_temp_reg(&mut self, size: X86Size) -> X86Register {
         // todo: spill any register if there is no free register
         let reg = self.allocator_mut().get_free_register(size).expect("no free temp register");
+        assert_eq!(reg.size(), size);
         self.use_specific_temp_reg(reg)
     }
 
     fn use_specific_temp_reg(&mut self, register: X86Register) -> X86Register {
-        let in_use_by_local = self.allocator().alive_locals.iter().find(
+        let in_use_by_local = self.allocator().alive_locals.iter().map(
             |local| match &self.allocator().locals[local] {
                 PlaceLocation::Stack(_) => {
-                    false
+                    None
                 }
                 PlaceLocation::Register(local_reg) => {
-                    register.is_same_register(local_reg)
+                    if register.is_same_register(local_reg) {
+                        Some((*local, *local_reg))
+                    } else {
+                        None
+                    }
                 }
             }
-        ).copied();
-        match in_use_by_local {
+        ).flatten().next();
+        let reg = match in_use_by_local {
             None => {
                 register
             }
-            Some(local) => {
+            Some((local, _)) => {
                 let reg_to_save = register.resize(&X86Size::QWord);
                 let block = self.push(X86Operand::register(reg_to_save));
                 self.allocator_mut().locals.insert(local, PlaceLocation::Stack(block));
-                self.allocator_mut().temp_registers.insert(reg_to_save.index());
-                self.temps.insert(register.index(), Temp::SavedReg(local, block, reg_to_save));
+                self.saved_values.insert(register.index(), Temp::SavedReg {
+                    local,
+                    saved_at: block,
+                    saved_reg: reg_to_save,
+                    original_reg: register,
+                });
                 register
             }
-        }
+        };
+        self.allocator_mut().temp_registers.insert(reg.index());
+        reg
     }
 
     fn free_temp_register(&mut self, register: X86Register) {
         // todo: develop algorithm to check if we can free place on the stack every time we operate on it
-        match self.temps.get(&register.index()).copied() {
+        match self.saved_values.get(&register.index()).copied() {
             None => {}
             Some(temp) => {
                 match temp {
-                    Temp::SavedReg(local, block, reg_to_restore) => {
-                        self.allocator_mut().locals.insert(local, PlaceLocation::Register(register));
-                        self.allocator_mut().temp_registers.remove(&reg_to_restore.index());
-                        self.temps.remove(&register.index());
+                    Temp::SavedReg { local, saved_at: block, saved_reg: reg_to_restore, original_reg } => {
+                        self.allocator_mut().locals.insert(local, PlaceLocation::Register(original_reg));
                         let is_on_top = self.allocator().stack.blocks.iter().last().map(|last_block| last_block.idx == block).unwrap_or(false);
                         if is_on_top {
                             self.pop(X86Operand::register(reg_to_restore));
@@ -1384,19 +1404,19 @@ impl<'a> X86Codegen<'a> {
                             );
                         }
                     }
-                    Temp::SavedStack(local, block, stored_in_reg) => {
+                    Temp::SavedStack { local, saved_stack_block: block, saved_at } => {
                         self.allocator_mut().locals.insert(local, PlaceLocation::Stack(block));
-                        self.allocator_mut().temp_registers.remove(&register.index());
-                        self.temps.remove(&register.index());
                         let offset = self.allocator().get_block_offset(block);
                         self.mov_unchecked(
-                            X86Operand::const_bp_offset(offset, register.size()),
-                            X86Operand::register(register),
+                            X86Operand::const_bp_offset(offset, saved_at.size()),
+                            X86Operand::register(saved_at),
                         );
                     }
                 }
             }
-        }
+        };
+        self.saved_values.remove(&register.index());
+        self.allocator_mut().temp_registers.remove(&register.index());
     }
 
     fn cleanup_stack(&mut self) {
@@ -1445,11 +1465,11 @@ impl<'a> X86Codegen<'a> {
                                                                                                X86Size::from_layout(&local_layout),
                 ));
                 self.allocator_mut().locals.insert(local_idx, PlaceLocation::Register(register));
-                self.temps.insert(register.index(), Temp::SavedStack(
-                    local_idx,
-                    block,
-                    register,
-                ));
+                self.saved_values.insert(register.index(), Temp::SavedStack {
+                    local: local_idx,
+                    saved_stack_block: block,
+                    saved_at: register,
+                });
                 self.allocator_mut().temp_registers.insert(register.index());
                 register
             }
@@ -1471,6 +1491,7 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn mov_unchecked(&mut self, destination: X86Operand, source: X86Operand) {
+        assert_eq!(destination.size, source.size, "{}", format!("mov_unchecked: destination size ({:?}) != source size ({:?})", destination.size, source.size));
         if destination == source {
             return;
         }
@@ -1657,6 +1678,7 @@ impl<'a> X86Codegen<'a> {
     fn gen_binop(&mut self, op: &BinOp, lhs: &Operand, rhs: &Operand, store_at: &Place) {
         let (lhs_op, temps_lhs) = self.gen_operand_op(lhs);
         let (rhs_op, temps_rhs) = self.gen_operand_op(rhs);
+        assert_eq!(lhs_op.size, rhs_op.size, "{}", format!("Binary operands {:?} and {:?} must have the same size, but {:?} and {:?} have different sizes: {}", lhs, rhs, lhs_op, rhs_op, self.asm));
         match op {
             BinOp::Add
             | BinOp::Sub
@@ -1683,6 +1705,7 @@ impl<'a> X86Codegen<'a> {
 
     fn gen_arithmetic_op(&mut self, op: &BinOp, lhs_op: X86Operand, rhs_op: X86Operand, store_at: &Place) {
         let (store_at_op, store_at_temps) = self.get_operand_for_place(store_at);
+        assert_eq!(store_at_op.size, lhs_op.size);
         match op {
             BinOp::Add => {
                 let lhs_op = self.ensure_in_reg(lhs_op);
@@ -1690,7 +1713,6 @@ impl<'a> X86Codegen<'a> {
                     store_at_op.clone(),
                     X86Operand::register(lhs_op),
                 );
-                // todo: ensure that store_at_op is a register
                 self.add_unchecked(
                     store_at_op,
                     rhs_op,
@@ -2009,8 +2031,7 @@ impl<'a> X86Codegen<'a> {
         self.body().scope.locals.get(local)
     }
 
-    fn layout_function_call_args(&mut self, args: Vec<(&Operand, MIRType)>) -> (Vec<X86Register>, u32) {
-        let mut arg_size = 0;
+    fn layout_function_call_args(&mut self, args: Vec<(&Operand, MIRType)>) -> Vec<X86Register> {
         let registers = [
             X86Register::RDI,
             X86Register::RSI,
@@ -2029,27 +2050,30 @@ impl<'a> X86Codegen<'a> {
         let mut used_registers = Vec::new();
         for (index, (value, _)) in args.iter().enumerate() {
             let (operand, temps) = self.gen_operand_op(value);
-            if index < arg_registers.len() {
-                let register = arg_registers[index];
-                self.mov_unchecked(
-                    X86Operand::register(register),
-                    operand,
-                );
-            } else {
-                arg_size += operand.size.num_bytes();
-                self.push(operand);
-            }
+            let register = arg_registers[index];
+            self.mov_unchecked(
+                X86Operand::register(register),
+                operand,
+            );
             used_registers.extend(temps);
         }
-        (used_registers, arg_size)
+        used_registers
     }
 
     fn save_caller_saved_registers(&mut self) -> Vec<X86Register> {
-        let regs = X86Register::caller_saved().to_vec();
+        let regs= self.get_used_caller_saved_registers();
         for reg in &regs {
             self.use_specific_temp_reg(*reg);
         }
         regs
+    }
+
+    fn get_used_caller_saved_registers(&mut self) -> Vec<X86Register> {
+        self.allocator().get_alive_registers().iter().filter(|reg| {
+            X86Register::caller_saved().contains(reg)
+        }).map(|reg| {
+            reg.resize(&X86Size::QWord)
+        }).collect::<Vec<_>>()
     }
 
     fn _push_instruction(&mut self, instruction: X86Instruction) {
