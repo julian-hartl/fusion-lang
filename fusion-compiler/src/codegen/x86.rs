@@ -26,6 +26,12 @@ struct StackFrameBlock {
     idx: StackFrameBlockIdx,
 }
 
+impl StackFrameBlock {
+    pub fn size(&self) -> u32 {
+        self.end - self.start
+    }
+}
+
 impl PartialOrd<Self> for StackFrameBlock {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.start.partial_cmp(&other.start)
@@ -128,6 +134,10 @@ impl StackFrame {
     pub fn get_block_offset(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
         let block = self.blocks.iter().find(|block| block.idx == idx)?;
         Some(StackOffset(block.start))
+    }
+
+    pub fn get_block(&self, idx: StackFrameBlockIdx) -> &StackFrameBlock {
+        self.blocks.iter().find(|block| block.idx == idx).expect(format!("Could not find block with index {:?}", idx).as_str())
     }
 
     fn find_free_range(&self, size: u32) -> Option<(u32, u32)> {
@@ -403,7 +413,7 @@ impl MemoryLocationAllocator {
         let mut registers = vec![];
         for local in self.locals.iter() {
             if let PlaceLocation::Register(r) = local.1 {
-                if X86Register::callee_saved().contains(r) && ! registers.contains(r){
+                if X86Register::callee_saved().contains(r) && !registers.contains(r) {
                     registers.push(*r);
                 }
             }
@@ -1355,9 +1365,12 @@ impl<'a> X86Codegen<'a> {
                     );
                 }
             }
-            InstructionKind::StorageDead { local } => {
-                self.allocator_mut().mark_variable_as_dead(*local);
-                self.cleanup_stack();
+            InstructionKind::StorageDead { local: local_idx } => {
+                self.allocator_mut().mark_variable_as_dead(*local_idx);
+                let diff = self.allocator().stack.check_difference();
+                if let Some(diff) = diff {
+                    self.decrease_stack_size(diff);
+                }
             }
             InstructionKind::PlaceMention(_) => {}
         }
@@ -1440,16 +1453,6 @@ impl<'a> X86Codegen<'a> {
         };
         self.saved_values.remove(&register.index());
         self.allocator_mut().temp_registers.remove(&register.index());
-    }
-
-    fn cleanup_stack(&mut self) {
-        let diff_to_last_allocation = self.allocator().stack.check_difference();
-        match diff_to_last_allocation {
-            None => {}
-            Some(diff) => {
-                self.decrease_stack_size(diff);
-            }
-        }
     }
 
     fn free_temp_registers(&mut self, registers: &Vec<X86Register>) {
@@ -2084,7 +2087,7 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn save_caller_saved_registers(&mut self) -> Vec<X86Register> {
-        let regs= self.get_used_caller_saved_registers();
+        let regs = self.get_used_caller_saved_registers();
         for reg in &regs {
             self.use_specific_temp_reg(*reg);
         }
