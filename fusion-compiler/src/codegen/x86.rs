@@ -399,6 +399,18 @@ impl MemoryLocationAllocator {
         registers
     }
 
+    pub fn get_used_callee_saved_registers(&self) -> Vec<X86Register> {
+        let mut registers = vec![];
+        for local in self.locals.iter() {
+            if let PlaceLocation::Register(r) = local.1 {
+                if X86Register::callee_saved().contains(r) && ! registers.contains(r){
+                    registers.push(*r);
+                }
+            }
+        }
+        registers
+    }
+
     fn is_register_free(&self, register: X86Register) -> bool {
         let is_used_as_temp = self.temp_registers.iter().any(|r| register.index() == *r);
         let is_used_by_alive_local = self.is_register_used(register);
@@ -1127,6 +1139,11 @@ impl<'a> X86Codegen<'a> {
             X86Operand::register(X86Register::RSP),
         );
         self.allocator_mut().allocate(&body.scope);
+        for callee_saved_reg in self.get_callee_saved_registers_to_save().iter() {
+            self.push(
+                X86Operand::register(*callee_saved_reg),
+            );
+        }
         for bb in body.basic_blocks.indexed_iter() {
             self.gen_basic_block(bb);
         }
@@ -1188,6 +1205,11 @@ impl<'a> X86Codegen<'a> {
                 }
             }
         }).collect());
+        for callee_saved_reg in self.get_callee_saved_registers_to_save().iter().rev() {
+            self.pop(
+                X86Operand::register(*callee_saved_reg),
+            );
+        }
         self.mov_unchecked(
             X86Operand::register(X86Register::RSP),
             X86Operand::register(X86Register::RBP),
@@ -2072,6 +2094,12 @@ impl<'a> X86Codegen<'a> {
         self.allocator().get_alive_registers().iter().filter(|reg| {
             X86Register::caller_saved().contains(reg)
         }).map(|reg| {
+            reg.resize(&X86Size::QWord)
+        }).collect::<Vec<_>>()
+    }
+
+    fn get_callee_saved_registers_to_save(&mut self) -> Vec<X86Register> {
+        self.allocator().get_used_callee_saved_registers().iter().map(|reg| {
             reg.resize(&X86Size::QWord)
         }).collect::<Vec<_>>()
     }
