@@ -1332,14 +1332,15 @@ impl<'a> X86Codegen<'a> {
                 //     X86Operand::immediate(X86Immediate::QWord(arg_size as i64)),
                 // );
                 // todo: for now we assume that each function returns its value in rax
-                self.free_temp_registers(&temp_arg_regs);
-                self.free_temp_registers(&caller_saved_regs);
+
                 let (return_value_operand, temps) = self.get_operand_for_place(return_value_place);
                 let size = return_value_operand.size;
                 self.mov_unchecked(
                     return_value_operand,
                     X86Operand::register(X86Register::RAX.resize(&size)),
                 );
+                self.free_temp_registers(&temp_arg_regs);
+                self.free_temp_registers(&caller_saved_regs);
                 self.free_temp_registers(&temps);
             }
             InstructionKind::StorageLive { local: local_idx } => {
