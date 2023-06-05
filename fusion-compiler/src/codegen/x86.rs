@@ -1988,7 +1988,8 @@ impl<'a> X86Codegen<'a> {
                     match projection {
                         Projection::Field(idx) => {
                             let additional_offset = self.scope.borrow().get_field_offset(&idx);
-                            offset.add_offset(additional_offset);
+                            let field = self.scope.borrow().get_field(&idx).ty.layout(&self.scope.borrow());
+                            offset.add_offset(additional_offset + field.size as u32);
                             layout = self.scope.borrow().get_field(&idx).ty.layout(&self.scope.borrow());
                         }
                         Projection::Index(index_stored_at) => {
