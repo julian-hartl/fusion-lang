@@ -14,11 +14,7 @@ func main -> i32 {
     let f = Foo { x: 10, y: 20 }
         yeah("x is zero")
 
-    if is_zero(f.x) {
-        yeah("x is zero")
-    } else {
-        no("x is not zero")
-    }
+
     let a = 10
     let b = 10
     let c = 10;
