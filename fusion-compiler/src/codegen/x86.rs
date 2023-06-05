@@ -1984,20 +1984,22 @@ impl<'a> X86Codegen<'a> {
             PlaceLocation::Stack(block) => {
                 let mut layout = local_layout;
                 let mut offset = self.allocator().get_block_offset_start(block);
-                offset.add_offset(local_layout.size);
                 if let Some(projection) = place.projection.clone() {
                     match projection {
                         Projection::Field(idx) => {
                             let additional_offset = self.scope.borrow().get_field_offset(&idx);
                             offset.add_offset(additional_offset);
                             layout = self.scope.borrow().get_field(&idx).ty.layout(&self.scope.borrow());
+                            offset.add_offset(layout.size as u32);
                         }
                         Projection::Index(index_stored_at) => {
                             let index = self.ensure_local_in_register(index_stored_at);
                             let local = self.get_local(place.local);
 
+                            let indexed_ty_layout = &local.ty.deref_type().expect("Cannot deref type").layout();
+                            offset.add_offset(indexed_ty_layout.size as u32);
                             return (X86Operand {
-                                size: X86Size::from_layout(&local.ty.deref_type().expect("Cannot deref type").layout()),
+                                size: X86Size::from_layout(indexed_ty_layout),
                                 mode: X86AddressingMode::Indexed {
                                     base: X86Register::RBP,
                                     index,
@@ -2009,6 +2011,9 @@ impl<'a> X86Codegen<'a> {
                         Projection::ConstantIndex(index) => {
                             let additional_offset = index * layout.size as u32;
                             offset.add_offset(additional_offset);
+                            let local = self.get_local(place.local);
+                            let indexed_ty_layout = &local.ty.deref_type().expect("Cannot deref type").layout();
+                            offset.add_offset(indexed_ty_layout.size as u32);
                         }
                         Projection::Deref => {
                             let temp_reg = self.use_temp_reg(
