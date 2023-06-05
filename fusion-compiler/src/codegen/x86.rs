@@ -45,16 +45,18 @@ impl Ord for StackFrameBlock {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-struct StackOffset(u32);
+struct StackOffset {
+    _raw_offset: u32,
+}
 
 
 impl StackOffset {
     pub fn to_rbp_offset(&self) -> i32 {
-        -(self.0 as i32 - Layout::POINTER_SIZE as i32)
+        -(self._raw_offset as i32)
     }
 
     pub fn add_offset(&mut self, offset: u32) {
-        self.0 += offset;
+        self._raw_offset += offset;
     }
 }
 
@@ -108,7 +110,7 @@ impl StackFrame {
     pub fn decrease_stack_by(&mut self, size: u32) {
         self.stack_pointer -= size;
         self.blocks.retain(|block| block.end <= self.stack_pointer);
-        assert_eq!(self.blocks.iter().last().unwrap().end, self.stack_pointer);
+        assert_eq!(self.blocks.iter().last().map(|block| block.end).unwrap_or(0), self.stack_pointer);
     }
 
     pub fn get_stack_pointer(&self) -> u32 {
@@ -121,7 +123,7 @@ impl StackFrame {
 
     /// Checks if the stack pointer does not match the actual top of the stack and returns the difference.
     pub fn check_difference(&self) -> Option<u32> {
-        let topmost_block_pointer = self.blocks.iter().last()?.end;
+        let topmost_block_pointer = self.blocks.iter().last().map(|block| block.end).unwrap_or(0);
         assert!(self.stack_pointer >= topmost_block_pointer, "Stack pointer {} is below topmost block pointer {}", self.stack_pointer, topmost_block_pointer);
         let diff = self.stack_pointer - topmost_block_pointer;
         if diff == 0 {
@@ -133,7 +135,7 @@ impl StackFrame {
 
     pub fn get_block_offset(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
         let block = self.blocks.iter().find(|block| block.idx == idx)?;
-        Some(StackOffset(block.end))
+        Some(StackOffset { _raw_offset: block.end })
     }
 
     pub fn get_block(&self, idx: StackFrameBlockIdx) -> &StackFrameBlock {
@@ -1146,14 +1148,13 @@ impl<'a> X86Codegen<'a> {
         self.asm.push_str(&format!("{}:\n", self.format_qualified_name(&function.name)));
         drop(scope);
         self.create_memory_location_allocator(body);
-        self.push(
-            X86Operand::register(X86Register::RBP),
-        );
+        self.raw("push rbp");
         self.mov_unchecked(
             X86Operand::register(X86Register::RBP),
             X86Operand::register(X86Register::RSP),
         );
         self.allocator_mut().allocate(&body.scope);
+        assert_eq!(self.allocator().stack.stack_pointer, 0);
         for callee_saved_reg in self.get_callee_saved_registers_to_save().iter() {
             self.push(
                 X86Operand::register(*callee_saved_reg),
@@ -1229,12 +1230,9 @@ impl<'a> X86Codegen<'a> {
             X86Operand::register(X86Register::RSP),
             X86Operand::register(X86Register::RBP),
         );
-        assert_eq!(self.allocator().stack.stack_pointer, 8);
+        assert_eq!(self.allocator().stack.stack_pointer, 0, "Stack frame {:?} not cleared", self.allocator().stack);
 
-        self.pop(
-            X86Operand::register(X86Register::RBP),
-        );
-        assert_eq!(self.allocator().stack.stack_pointer, 0);
+        self.raw("pop rbp");
         self.ret();
     }
 
@@ -1573,7 +1571,7 @@ impl<'a> X86Codegen<'a> {
             }
             _ => {}
         };
-        self.allocator_mut().stack.pop_block();
+        self.allocator_mut().stack.pop_block().expect(format!("Tried to pop {:?} from empty stack", operand).as_str());
         self._push_instruction(X86Instruction::Pop(operand));
     }
 
@@ -2115,6 +2113,11 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn _push_instruction(&mut self, instruction: X86Instruction) {
+        if let Some(alloc) = &self.memory_location_allocator {
+            self.asm.push_str(
+                format!("    # {}\n", alloc.stack.stack_pointer).as_str()
+            );
+        }
         self.asm.push_str("    ");
         self.asm.push_str(format!("{}", instruction).as_str());
         self.asm.push_str("\n");
