@@ -50,7 +50,7 @@ struct StackOffset(u32);
 
 impl StackOffset {
     pub fn to_rbp_offset(&self) -> i32 {
-        -(self.0 as i32 - 8)
+        -(self.0 as i32 - Layout::POINTER_SIZE as i32)
     }
 
     pub fn add_offset(&mut self, offset: u32) {
