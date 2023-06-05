@@ -1537,6 +1537,17 @@ impl<'a> X86Codegen<'a> {
         self._push_instruction(X86Instruction::Mov(destination, source));
     }
 
+    fn sub(&mut self, lhs: X86Operand, rhs: X86Operand) {
+        if lhs.is_mem_operand() && rhs.is_mem_operand() {
+            let temp_register = self.use_temp_reg(rhs.size);
+            self.mov_unchecked(X86Operand::register(temp_register), rhs);
+            self.sub_unchecked(lhs, X86Operand::register(temp_register));
+            self.free_temp_register(temp_register);
+        } else {
+            self.sub_unchecked(lhs, rhs);
+        }
+    }
+
     fn sub_unchecked(&mut self, lhs: X86Operand, rhs: X86Operand) {
         self._push_instruction(X86Instruction::Sub(lhs, rhs));
     }
@@ -1546,6 +1557,7 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn add(&mut self, lhs: X86Operand, rhs: X86Operand) {
+        // todo: refactor into separate function
         if lhs.is_mem_operand() && rhs.is_mem_operand() {
             let temp_register = self.use_temp_reg(rhs.size);
             self.mov_unchecked(X86Operand::register(temp_register), rhs);
@@ -1775,7 +1787,7 @@ impl<'a> X86Codegen<'a> {
                     store_at_op.clone(),
                     X86Operand::register(lhs_op),
                 );
-                self.sub_unchecked(
+                self.sub(
                     store_at_op,
                     rhs_op,
                 );
