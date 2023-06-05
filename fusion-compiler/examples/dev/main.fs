@@ -12,15 +12,23 @@ func main -> i32 {
     }
     let f = Foo { x: 10, y: 20 }
     if is_zero(f.x) {
-        std::io::println("x is zero")
+        yeah("x is zero")
     } else {
-        std::io::println("x is not zero")
+        no("x is not zero")
     }
     let a = 10
     let b = 10
     let c = 10;
     do_stuff(a, b) + c
     return c
+}
+
+func yeah(s: *char) {
+    std::io::println(s)
+}
+
+func no(s: *char) {
+    std::io::println(s)
 }
 
 struct Foo {
