@@ -133,9 +133,14 @@ impl StackFrame {
         }
     }
 
-    pub fn get_block_offset(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
-        let block = self.blocks.iter().find(|block| block.idx == idx)?;
+    pub fn get_block_offset_end(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
+        let block = self.get_block(idx);
         Some(StackOffset { _raw_offset: block.end })
+    }
+
+    pub fn get_block_offset_start(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
+        let block = self.get_block(idx);
+        Some(StackOffset { _raw_offset: block.start })
     }
 
     pub fn get_block(&self, idx: StackFrameBlockIdx) -> &StackFrameBlock {
@@ -391,8 +396,12 @@ impl MemoryLocationAllocator {
         self.locals.insert(idx, PlaceLocation::Stack(block_idx));
     }
 
-    pub fn get_block_offset(&self, block: StackFrameBlockIdx) -> StackOffset {
-        self.stack.get_block_offset(block).expect(format!("Block {:?} not found", block).as_str())
+    pub fn get_block_offset_end(&self, block: StackFrameBlockIdx) -> StackOffset {
+        self.stack.get_block_offset_end(block).expect(format!("Block {:?} not found", block).as_str())
+    }
+
+    pub fn get_block_offset_start(&self, block: StackFrameBlockIdx) -> StackOffset {
+        self.stack.get_block_offset_start(block).expect(format!("Block {:?} not found", block).as_str())
     }
 
     pub fn mark_variable_as_dead(&mut self, local: LocalIdx) {
@@ -1437,7 +1446,7 @@ impl<'a> X86Codegen<'a> {
                             self.pop(X86Operand::register(reg_to_restore));
                         } else {
                             self.allocator_mut().stack.free_block(block);
-                            let saved_value_offset = self.allocator().get_block_offset(block);
+                            let saved_value_offset = self.allocator().get_block_offset_end(block);
                             self.mov_unchecked(
                                 X86Operand::register(reg_to_restore),
                                 X86Operand::const_bp_offset(saved_value_offset, reg_to_restore.size()),
@@ -1446,7 +1455,7 @@ impl<'a> X86Codegen<'a> {
                     }
                     Temp::SavedStack { local, saved_stack_block: block, saved_at } => {
                         self.allocator_mut().locals.insert(local, PlaceLocation::Stack(block));
-                        let offset = self.allocator().get_block_offset(block);
+                        let offset = self.allocator().get_block_offset_end(block);
                         self.mov_unchecked(
                             X86Operand::const_bp_offset(offset, saved_at.size()),
                             X86Operand::register(saved_at),
@@ -1489,7 +1498,7 @@ impl<'a> X86Codegen<'a> {
         match *self.allocator().get_location(&local_idx) {
             PlaceLocation::Stack(block) => {
                 let local_layout = self.layout_local(local_idx);
-                let offset = self.allocator().get_block_offset(block);
+                let offset = self.allocator().get_block_offset_end(block);
                 let register = self.use_temp_reg(X86Size::from_layout(&local_layout));
                 self.mov_unchecked(X86Operand::register(register), X86Operand::const_bp_offset(offset,
                                                                                                X86Size::from_layout(&local_layout),
@@ -1974,7 +1983,7 @@ impl<'a> X86Codegen<'a> {
         match *loc {
             PlaceLocation::Stack(block) => {
                 let mut layout = local_layout;
-                let mut offset = self.allocator().get_block_offset(block);
+                let mut offset = self.allocator().get_block_offset_start(block);
                 if let Some(projection) = place.projection.clone() {
                     match projection {
                         Projection::Field(idx) => {
