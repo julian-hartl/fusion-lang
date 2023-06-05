@@ -50,7 +50,7 @@ struct StackOffset(u32);
 
 impl StackOffset {
     pub fn to_rbp_offset(&self) -> i32 {
-        -(self.0 as i32)
+        -(self.0 as i32 - 8)
     }
 
     pub fn add_offset(&mut self, offset: u32) {
@@ -133,7 +133,7 @@ impl StackFrame {
 
     pub fn get_block_offset(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
         let block = self.blocks.iter().find(|block| block.idx == idx)?;
-        Some(StackOffset(block.start))
+        Some(StackOffset(block.end))
     }
 
     pub fn get_block(&self, idx: StackFrameBlockIdx) -> &StackFrameBlock {
@@ -372,7 +372,9 @@ impl MemoryLocationAllocator {
     pub fn mark_local_as_alive(&mut self, idx: LocalIdx, local_layout: Layout) {
         self.alive_locals.insert(idx);
         match self.locals.get(&idx) {
-            Some(PlaceLocation::Stack(_)) => {}
+            Some(PlaceLocation::Stack(_)) => {
+                unreachable!("Local {:?} is already on the stack", idx)
+            }
             Some(PlaceLocation::Register(_)) => {}
             None => {
                 self.allocate_on_stack(idx, local_layout);
@@ -381,8 +383,10 @@ impl MemoryLocationAllocator {
     }
 
     fn allocate_on_stack(&mut self, idx: LocalIdx, local_layout: Layout) {
-        let block = self.stack.allocate(local_layout.size);
-        self.locals.insert(idx, PlaceLocation::Stack(block));
+        let block_idx = self.stack.allocate(local_layout.size);
+        let block = self.stack.get_block(block_idx);
+        assert_eq!(block.size(), local_layout.size);
+        self.locals.insert(idx, PlaceLocation::Stack(block_idx));
     }
 
     pub fn get_block_offset(&self, block: StackFrameBlockIdx) -> StackOffset {
@@ -1359,6 +1363,7 @@ impl<'a> X86Codegen<'a> {
                 let sp = self.allocator().stack.stack_pointer;
                 self.allocator_mut().mark_local_as_alive(*local_idx, layout);
                 let diff = self.allocator().stack.stack_pointer - sp;
+                assert!(diff == 0 || diff == layout.size);
                 if diff > 0 {
                     self.sub_unchecked(
                         X86Operand::register(X86Register::RSP),
