@@ -18,8 +18,7 @@ func main -> i32 {
     let a = 10
     let b = 10
     let c = 10;
-    do_stuff(a, b) + c
-    return c
+    return do_stuff(a, b) + c
 }
 
 func yeah(s: *char) {
