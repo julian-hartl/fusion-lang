@@ -10,7 +10,10 @@ func main -> i32 {
             std::io::println("Hello, world2!");
             i = i - 1
     }
+    yeah("x is zero")
     let f = Foo { x: 10, y: 20 }
+        yeah("x is zero")
+
     if is_zero(f.x) {
         yeah("x is zero")
     } else {
