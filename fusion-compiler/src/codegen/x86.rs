@@ -1088,7 +1088,8 @@ impl<'a> X86Codegen<'a> {
         self.gen_globals();
         self.asm.push_str(".text\n");
         self.gen_start();
-        for body in self.mir.bodies.iter() {
+        let bodies = self.mir.sorted_bodies(&self.scope.borrow());
+        for body in bodies.iter() {
             self.gen_body(body);
         }
         self.asm

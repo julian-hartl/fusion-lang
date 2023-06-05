@@ -894,14 +894,14 @@ pub enum TerminatorKind {
 idx!(BodyIdx);
 
 pub struct MIR {
-    pub bodies: IdxVec<BodyIdx, Body>,
+    pub _bodies: IdxVec<BodyIdx, Body>,
     pub globals: IdxVec<GlobalIdx, Global>,
 }
 
 impl MIR {
     pub fn new() -> Self {
         Self {
-            bodies: IdxVec::new(),
+            _bodies: IdxVec::new(),
             globals: IdxVec::new(),
         }
     }
@@ -918,7 +918,7 @@ impl MIR {
     pub fn graphviz(&self, scope: &GlobalScope) -> String {
         let mut s = String::new();
         s.push_str("digraph {\n");
-        for body in self.bodies.iter() {
+        for body in self.sorted_bodies(scope).iter() {
             let function = scope.get_function(&body.function);
             s.push_str(&format!("  subgraph cluster_{} {{\n", body.function.as_idx()));
             s.push_str(&format!("    label = \"{}\";\n", function.name));
@@ -961,7 +961,7 @@ impl MIR {
         for (idx, global) in self.globals.indexed_iter() {
             s.push_str(&format!("{}@{} = {};\n", idx, global.ty, global.value));
         }
-        for body in self.bodies.iter() {
+        for body in self.sorted_bodies(scope).iter() {
             let function = scope.get_function(&body.function);
             s.push_str(&format!("{}:\n", function.name));
             let scope_string = self.format_scopes(&body);
@@ -1022,6 +1022,15 @@ impl MIR {
         // let mut interpreter = Interpreter::new(self, scope);
         // interpreter.interpret();
     }
+
+    pub fn sorted_bodies(&self,global_scope: &GlobalScope) -> Vec<&Body> {
+        let mut bodies = self._bodies.iter().collect::<Vec<_>>();
+        bodies.sort_by_key(|b| {
+            let function = global_scope.get_function(&b.function);
+            &function.name.name
+        });
+        bodies
+    }
 }
 
 pub struct MIRGen {
@@ -1063,7 +1072,7 @@ impl MIRGen {
             if function.is_extern() {
                 continue;
             }
-            self.ir.bodies.push(self.construct_function(*function_idx, body));
+            self.ir._bodies.push(self.construct_function(*function_idx, body));
         }
     }
 
