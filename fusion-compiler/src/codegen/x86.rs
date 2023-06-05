@@ -1545,6 +1545,17 @@ impl<'a> X86Codegen<'a> {
         self._push_instruction(X86Instruction::And(lhs, rhs));
     }
 
+    fn add(&mut self, lhs: X86Operand, rhs: X86Operand) {
+        if lhs.is_mem_operand() && rhs.is_mem_operand() {
+            let temp_register = self.use_temp_reg(rhs.size);
+            self.mov_unchecked(X86Operand::register(temp_register), rhs);
+            self.add_unchecked(lhs, X86Operand::register(temp_register));
+            self.free_temp_register(temp_register);
+        } else {
+            self.add_unchecked(lhs, rhs);
+        }
+    }
+
     fn add_unchecked(&mut self, lhs: X86Operand, rhs: X86Operand) {
         self._push_instruction(X86Instruction::Add(lhs, rhs));
     }
@@ -1752,7 +1763,7 @@ impl<'a> X86Codegen<'a> {
                     store_at_op.clone(),
                     X86Operand::register(lhs_op),
                 );
-                self.add_unchecked(
+                self.add(
                     store_at_op,
                     rhs_op,
                 );
@@ -1760,13 +1771,13 @@ impl<'a> X86Codegen<'a> {
             }
             BinOp::Sub => {
                 let lhs_op = self.ensure_in_reg(lhs_op);
-                self.sub_unchecked(
-                    X86Operand::register(lhs_op),
-                    rhs_op,
-                );
                 self.mov_unchecked(
-                    store_at_op,
+                    store_at_op.clone(),
                     X86Operand::register(lhs_op),
+                );
+                self.sub_unchecked(
+                    store_at_op,
+                    rhs_op,
                 );
                 self.free_temp_register(lhs_op);
             }
