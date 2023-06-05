@@ -619,16 +619,16 @@ impl X86Register {
             X86Register::DL | X86Register::DH | X86Register::DX | X86Register::EDX | X86Register::RDX => 3,
             X86Register::SIL | X86Register::SI | X86Register::ESI | X86Register::RSI => 4,
             X86Register::DIL | X86Register::DI | X86Register::EDI | X86Register::RDI => 5,
-            X86Register::BPL | X86Register::BP | X86Register::EBP | X86Register::RBP => 6,
-            X86Register::SPL | X86Register::SP | X86Register::ESP | X86Register::RSP => 7,
-            X86Register::R8B | X86Register::R8W | X86Register::R8D | X86Register::R8 => 8,
-            X86Register::R9B | X86Register::R9W | X86Register::R9D | X86Register::R9 => 9,
-            X86Register::R10B | X86Register::R10W | X86Register::R10D | X86Register::R10 => 10,
-            X86Register::R11B | X86Register::R11W | X86Register::R11D | X86Register::R11 => 11,
-            X86Register::R12B | X86Register::R12W | X86Register::R12D | X86Register::R12 => 12,
-            X86Register::R13B | X86Register::R13W | X86Register::R13D | X86Register::R13 => 13,
-            X86Register::R14B | X86Register::R14W | X86Register::R14D | X86Register::R14 => 14,
-            X86Register::R15B | X86Register::R15W | X86Register::R15D | X86Register::R15 => 15,
+            X86Register::R8B | X86Register::R8W | X86Register::R8D | X86Register::R8 => 6,
+            X86Register::R9B | X86Register::R9W | X86Register::R9D | X86Register::R9 => 7,
+            X86Register::R10B | X86Register::R10W | X86Register::R10D | X86Register::R10 => 8,
+            X86Register::R11B | X86Register::R11W | X86Register::R11D | X86Register::R11 => 9,
+            X86Register::R12B | X86Register::R12W | X86Register::R12D | X86Register::R12 => 10,
+            X86Register::R13B | X86Register::R13W | X86Register::R13D | X86Register::R13 => 11,
+            X86Register::R14B | X86Register::R14W | X86Register::R14D | X86Register::R14 => 12,
+            X86Register::R15B | X86Register::R15W | X86Register::R15D | X86Register::R15 => 13,
+            X86Register::BPL | X86Register::BP | X86Register::EBP | X86Register::RBP => 14,
+            X86Register::SPL | X86Register::SP | X86Register::ESP | X86Register::RSP => 15,
         };
         RegisterIdx::new(raw_index)
     }
@@ -646,7 +646,7 @@ impl X86Register {
                 GENERAL_PURPOSE_REGS_64_BIT[index],
         };
         assert_eq!(resized.size(), *size);
-        assert_eq!(resized.index(), self.index());
+        assert_eq!( self.index(), resized.index(), "Register index should not change when resizing {:?}: {} -> {}", size, self, resized);
         resized
     }
 
