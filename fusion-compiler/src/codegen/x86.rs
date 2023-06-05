@@ -1984,12 +1984,12 @@ impl<'a> X86Codegen<'a> {
             PlaceLocation::Stack(block) => {
                 let mut layout = local_layout;
                 let mut offset = self.allocator().get_block_offset_start(block);
+                offset.add_offset(local_layout.size);
                 if let Some(projection) = place.projection.clone() {
                     match projection {
                         Projection::Field(idx) => {
                             let additional_offset = self.scope.borrow().get_field_offset(&idx);
-                            let field = self.scope.borrow().get_field(&idx).ty.layout(&self.scope.borrow());
-                            offset.add_offset(additional_offset + field.size as u32);
+                            offset.add_offset(additional_offset);
                             layout = self.scope.borrow().get_field(&idx).ty.layout(&self.scope.borrow());
                         }
                         Projection::Index(index_stored_at) => {
