@@ -10,9 +10,10 @@ func main -> i32 {
             std::io::println("Hello, world2!");
             i = i - 1
     }
+    let x = 10;
     yeah("x is zero")
     let f = Foo { x: 10, y: 20 }
-        yeah("x is zero")
+    yeah("x is zero")
 
 
     let a = 10

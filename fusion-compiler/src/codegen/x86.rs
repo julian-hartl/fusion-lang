@@ -1,17 +1,14 @@
-use std::any::Any;
-use std::arch::asm;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
-use std::ops::Deref;
 
 use petgraph::Graph;
-use petgraph::graph::{Node, NodeIndex};
+use petgraph::graph::{NodeIndex};
 
 use fusion_compiler::{idx, IdxVec};
 use fusion_compiler::Idx;
 
-use crate::hir::{FunctionIdx, HIRBinaryOperator};
+use crate::hir::FunctionIdx;
 use crate::mir::{BasicBlock, BasicBlockIdx, BinOp, Body, BodyScope, ConstantValue, GlobalIdx, GlobalValue, Instruction, InstructionKind, Local, LocalIdx, MIR, MIRType, Operand, Place, Projection, Rvalue, Scalar, TerminatorKind, UnOp};
 use crate::modules::scopes::GlobalScopeCell;
 use crate::modules::symbols::QualifiedName;
@@ -133,14 +130,9 @@ impl StackFrame {
         }
     }
 
-    pub fn get_block_offset_end(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
+    pub fn get_block_offset(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
         let block = self.get_block(idx);
         Some(StackOffset { _raw_offset: block.end })
-    }
-
-    pub fn get_block_offset_start(&self, idx: StackFrameBlockIdx) -> Option<StackOffset> {
-        let block = self.get_block(idx);
-        Some(StackOffset { _raw_offset: block.start })
     }
 
     pub fn get_block(&self, idx: StackFrameBlockIdx) -> &StackFrameBlock {
@@ -167,7 +159,7 @@ type InterferenceGraph = Graph<LocalIdx, ()>;
 
 const GENERAL_PURPOSE_REGISTER_COUNT: usize = 14;
 
-static GENERAL_PURPOSE_REGS_64_BIT: &'static [X86Register; GENERAL_PURPOSE_REGISTER_COUNT] = &[
+static GENERAL_PURPOSE_REGS_64_BIT: &[X86Register; GENERAL_PURPOSE_REGISTER_COUNT] = &[
     X86Register::RAX,
     X86Register::RBX,
     X86Register::RCX,
@@ -184,7 +176,7 @@ static GENERAL_PURPOSE_REGS_64_BIT: &'static [X86Register; GENERAL_PURPOSE_REGIS
     X86Register::R15,
 ];
 
-static GENERAL_PURPOSE_REGS_32_BIT: &'static [X86Register; GENERAL_PURPOSE_REGISTER_COUNT] = &[
+static GENERAL_PURPOSE_REGS_32_BIT: &[X86Register; GENERAL_PURPOSE_REGISTER_COUNT] = &[
     X86Register::EAX,
     X86Register::EBX,
     X86Register::ECX,
@@ -201,7 +193,7 @@ static GENERAL_PURPOSE_REGS_32_BIT: &'static [X86Register; GENERAL_PURPOSE_REGIS
     X86Register::R15D,
 ];
 
-static GENERAL_PURPOSE_REGS_16_BIT: &'static [X86Register; GENERAL_PURPOSE_REGISTER_COUNT] = &[
+static GENERAL_PURPOSE_REGS_16_BIT: &[X86Register; GENERAL_PURPOSE_REGISTER_COUNT] = &[
     X86Register::AX,
     X86Register::BX,
     X86Register::CX,
@@ -351,16 +343,13 @@ impl MemoryLocationAllocator {
 
     fn allocate_locations(&mut self, body_scope: &BodyScope) {
         for node in self.interference_graph.node_indices() {
-            let local_idx = self.interference_graph[node].clone();
+            let local_idx = self.interference_graph[node];
             let local_layout = body_scope.locals.get(local_idx).ty.layout();
-            match self.color_map.get(&node) {
-                Some(color) => {
-                    let size = X86Size::from(&local_layout);
-                    let register = color.into_register(size);
-                    assert_eq!(register.size(), size);
-                    self.use_mapped_register(local_idx, register);
-                }
-                None => {}
+            if let Some(color) = self.color_map.get(&node) {
+                let size = X86Size::from(&local_layout);
+                let register = color.into_register(size);
+                assert_eq!(register.size(), size);
+                self.use_mapped_register(local_idx, register);
             }
         }
     }
@@ -396,12 +385,8 @@ impl MemoryLocationAllocator {
         self.locals.insert(idx, PlaceLocation::Stack(block_idx));
     }
 
-    pub fn get_block_offset_end(&self, block: StackFrameBlockIdx) -> StackOffset {
-        self.stack.get_block_offset_end(block).expect(format!("Block {:?} not found", block).as_str())
-    }
-
-    pub fn get_block_offset_start(&self, block: StackFrameBlockIdx) -> StackOffset {
-        self.stack.get_block_offset_start(block).expect(format!("Block {:?} not found", block).as_str())
+    pub fn get_block_offset(&self, block: StackFrameBlockIdx) -> StackOffset {
+        self.stack.get_block_offset(block).expect(format!("Block {:?} not found", block).as_str())
     }
 
     pub fn mark_variable_as_dead(&mut self, local: LocalIdx) {
@@ -465,7 +450,7 @@ impl MemoryLocationAllocator {
         GENERAL_PURPOSE_REGISTER_COUNT as u8
     }
 
-    fn find_node_to_remove(&self, removed_nodes: &Vec<NodeIndex>) -> Option<NodeIndex> {
+    fn find_node_to_remove(&self, removed_nodes: &[NodeIndex]) -> Option<NodeIndex> {
         self.interference_graph.node_indices()
             .find(|i| !removed_nodes.contains(i) && self.interference_graph.edges(*i).count() < self.k() as usize && i.index() > self.parameters.len())
     }
@@ -646,7 +631,7 @@ impl X86Register {
                 GENERAL_PURPOSE_REGS_64_BIT[index],
         };
         assert_eq!(resized.size(), *size);
-        assert_eq!( self.index(), resized.index(), "Register index should not change when resizing {:?}: {} -> {}", size, self, resized);
+        assert_eq!(self.index(), resized.index(), "Register index should not change when resizing {:?}: {} -> {}", size, self, resized);
         resized
     }
 
@@ -828,40 +813,37 @@ impl X86Operand {
 
 impl Display for X86Operand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            X86Operand { mode, size } => {
-                match mode {
-                    X86AddressingMode::Immediate(imm) => write!(f, "{}", imm),
-                    X86AddressingMode::Register(reg) => write!(f, "{}", reg),
-                    X86AddressingMode::Indirect(reg) => write!(f, "[{}]", reg),
-                    X86AddressingMode::Displacement { base, displacement } => {
-                        if *displacement == 0 {
-                            write!(f, "{} [{}]", size, base)
-                        } else {
-                            write!(f, "{} [{} {}]", size, base, format_displacement(*displacement))
-                        }
-                    }
-                    X86AddressingMode::Indexed {
-                        base,
-                        index,
-                        displacement,
-                        scale,
-                    } => {
-                        let displacement = *displacement;
-                        if displacement == 0 && *scale == 1 {
-                            write!(f, "{} [{} + {}]", size, base, index)
-                        } else if displacement == 0 {
-                            write!(f, "{} [{} + {} * {}]", size, base, index, scale)
-                        } else if *scale == 1 {
-                            write!(f, "{} [{} + {} {}]", size, base, index, format_displacement(displacement))
-                        } else {
-                            write!(f, "{} [{} + {} * {} {}]", size, base, index, scale, format_displacement(displacement))
-                        }
-                    }
-                    X86AddressingMode::DataLabel(label) => {
-                        write!(f, "[{}]", label)
-                    }
+        let X86Operand { mode, size } = self;
+        match mode {
+            X86AddressingMode::Immediate(imm) => write!(f, "{}", imm),
+            X86AddressingMode::Register(reg) => write!(f, "{}", reg),
+            X86AddressingMode::Indirect(reg) => write!(f, "[{}]", reg),
+            X86AddressingMode::Displacement { base, displacement } => {
+                if *displacement == 0 {
+                    write!(f, "{} [{}]", size, base)
+                } else {
+                    write!(f, "{} [{} {}]", size, base, format_displacement(*displacement))
                 }
+            }
+            X86AddressingMode::Indexed {
+                base,
+                index,
+                displacement,
+                scale,
+            } => {
+                let displacement = *displacement;
+                if displacement == 0 && *scale == 1 {
+                    write!(f, "{} [{} + {}]", size, base, index)
+                } else if displacement == 0 {
+                    write!(f, "{} [{} + {} * {}]", size, base, index, scale)
+                } else if *scale == 1 {
+                    write!(f, "{} [{} + {} {}]", size, base, index, format_displacement(displacement))
+                } else {
+                    write!(f, "{} [{} + {} * {} {}]", size, base, index, scale, format_displacement(displacement))
+                }
+            }
+            X86AddressingMode::DataLabel(label) => {
+                write!(f, "[{}]", label)
             }
         }
     }
@@ -1179,13 +1161,13 @@ impl<'a> X86Codegen<'a> {
         let scope_ref = self.scope.borrow();
         let function = scope_ref.get_function(&body.function);
         let parameter_places = function.parameters.iter().map(|var_id| {
-            body.scope.get_variable(var_id).unwrap().clone()
+            *body.scope.get_variable(var_id).unwrap()
         }).collect();
         let mut allocator = MemoryLocationAllocator::new(
             parameter_places,
         );
         let mut alive_places = vec![];
-        for instruction in body.basic_blocks.iter().map(|bb| &bb.instructions).flatten() {
+        for instruction in body.basic_blocks.iter().flat_map(|bb| &bb.instructions) {
             match &instruction.kind {
                 InstructionKind::StorageLive { local } => {
                     allocator.add_local(*local);
@@ -1229,7 +1211,7 @@ impl<'a> X86Codegen<'a> {
                     *reg
                 }
             }
-        }).collect());
+        }).collect::<Vec<_>>());
         for callee_saved_reg in self.get_callee_saved_registers_to_save().iter().rev() {
             self.pop(
                 X86Operand::register(*callee_saved_reg),
@@ -1277,11 +1259,8 @@ impl<'a> X86Codegen<'a> {
         }
         let terminator = &bb.1.terminator;
         self.gen_term(terminator);
-        match &terminator.kind {
-            TerminatorKind::Return => {
-                self.allocator_mut().stack = saved_stack_frame;
-            }
-            _ => {}
+        if let TerminatorKind::Return = &terminator.kind {
+            self.allocator_mut().stack = saved_stack_frame;
         }
     }
 
@@ -1398,20 +1377,18 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn use_specific_temp_reg(&mut self, register: X86Register) -> X86Register {
-        let in_use_by_local = self.allocator().alive_locals.iter().map(
-            |local| match &self.allocator().locals[local] {
-                PlaceLocation::Stack(_) => {
+        let in_use_by_local = self.allocator().alive_locals.iter().filter_map(|local| match &self.allocator().locals[local] {
+            PlaceLocation::Stack(_) => {
+                None
+            }
+            PlaceLocation::Register(local_reg) => {
+                if register.is_same_register(local_reg) {
+                    Some((*local, *local_reg))
+                } else {
                     None
                 }
-                PlaceLocation::Register(local_reg) => {
-                    if register.is_same_register(local_reg) {
-                        Some((*local, *local_reg))
-                    } else {
-                        None
-                    }
-                }
             }
-        ).flatten().next();
+        }).next();
         let reg = match in_use_by_local {
             None => {
                 register
@@ -1446,7 +1423,7 @@ impl<'a> X86Codegen<'a> {
                             self.pop(X86Operand::register(reg_to_restore));
                         } else {
                             self.allocator_mut().stack.free_block(block);
-                            let saved_value_offset = self.allocator().get_block_offset_end(block);
+                            let saved_value_offset = self.allocator().get_block_offset(block);
                             self.mov_unchecked(
                                 X86Operand::register(reg_to_restore),
                                 X86Operand::const_bp_offset(saved_value_offset, reg_to_restore.size()),
@@ -1455,7 +1432,7 @@ impl<'a> X86Codegen<'a> {
                     }
                     Temp::SavedStack { local, saved_stack_block: block, saved_at } => {
                         self.allocator_mut().locals.insert(local, PlaceLocation::Stack(block));
-                        let offset = self.allocator().get_block_offset_end(block);
+                        let offset = self.allocator().get_block_offset(block);
                         self.mov_unchecked(
                             X86Operand::const_bp_offset(offset, saved_at.size()),
                             X86Operand::register(saved_at),
@@ -1468,7 +1445,7 @@ impl<'a> X86Codegen<'a> {
         self.allocator_mut().temp_registers.remove(&register.index());
     }
 
-    fn free_temp_registers(&mut self, registers: &Vec<X86Register>) {
+    fn free_temp_registers(&mut self, registers: &[X86Register]) {
         for register in registers.iter().rev() {
             self.free_temp_register(*register);
         }
@@ -1498,7 +1475,7 @@ impl<'a> X86Codegen<'a> {
         match *self.allocator().get_location(&local_idx) {
             PlaceLocation::Stack(block) => {
                 let local_layout = self.layout_local(local_idx);
-                let offset = self.allocator().get_block_offset_end(block);
+                let offset = self.allocator().get_block_offset(block);
                 let register = self.use_temp_reg(X86Size::from_layout(&local_layout));
                 self.mov_unchecked(X86Operand::register(register), X86Operand::const_bp_offset(offset,
                                                                                                X86Size::from_layout(&local_layout),
@@ -1713,7 +1690,7 @@ impl<'a> X86Codegen<'a> {
                 }
             }
             Rvalue::AddressOf(_, place) => {
-                self.gen_place(&place, store_at);
+                self.gen_place(place, store_at);
             }
             Rvalue::Use(operand) => {
                 self.gen_operand_and_store(operand, store_at);
@@ -2006,7 +1983,7 @@ impl<'a> X86Codegen<'a> {
         match *loc {
             PlaceLocation::Stack(block) => {
                 let mut layout = local_layout;
-                let mut offset = self.allocator().get_block_offset_end(block);
+                let mut offset = self.allocator().get_block_offset(block);
                 if let Some(projection) = place.projection.clone() {
                     match projection {
                         Projection::Field(idx) => {
@@ -2146,13 +2123,8 @@ impl<'a> X86Codegen<'a> {
     }
 
     fn _push_instruction(&mut self, instruction: X86Instruction) {
-        if let Some(alloc) = &self.memory_location_allocator {
-            self.asm.push_str(
-                format!("    # {}\n", alloc.stack.stack_pointer).as_str()
-            );
-        }
         self.asm.push_str("    ");
         self.asm.push_str(format!("{}", instruction).as_str());
-        self.asm.push_str("\n");
+        self.asm.push('\n');
     }
 }
