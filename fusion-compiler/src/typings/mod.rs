@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::ops::DerefMut;
 
-use crate::ast::lexer::TokenKind;
+use crate::ast::lexer::token::TokenKind;
 use crate::hir::StructIdx;
 use crate::modules::scopes::GlobalScope;
 

@@ -1,7 +1,7 @@
 use std::fmt::format;
 use std::ops::Not;
 
-use crate::hir::{HIR, HIRAssignmentExpression, HIRBinaryExpression, HIRBlockStatement, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfStatement, HIRIndexExpression, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStructInitExpression, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
+use crate::hir::{HIR, HIRAssignmentExpression, HIRBinaryExpression, HIRBlockExpr, HIRCallee, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRGlobal, HIRIfExpr, HIRIndexExpression, HIRLiteralExpression, HIRLiteralValue, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStructInitExpression, HIRUnaryExpression, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileExpr};
 use crate::hir::visitor::HIRVisitor;
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
 
@@ -184,7 +184,7 @@ impl HIRVisitor for HIRVisualizer<'_> {
         self.visit_expr(&stmt.initializer);
     }
 
-    fn visit_if_stmt(&mut self, stmt: &HIRIfStatement) {
+    fn visit_if_stmt(&mut self, stmt: &HIRIfExpr) {
         self.write("if");
         self.write_whitespace();
         self.visit_expr(&stmt.condition);
@@ -197,7 +197,7 @@ impl HIRVisitor for HIRVisualizer<'_> {
         }
     }
 
-    fn visit_while_stmt(&mut self, stmt: &HIRWhileStatement) {
+    fn visit_while_stmt(&mut self, stmt: &HIRWhileExpr) {
         self.write("while");
         self.write_whitespace();
         self.visit_expr(&stmt.condition);
@@ -205,7 +205,7 @@ impl HIRVisitor for HIRVisualizer<'_> {
         self.block(&stmt.body);
     }
 
-    fn visit_block_stmt(&mut self, stmt: &HIRBlockStatement) {
+    fn visit_block_stmt(&mut self, stmt: &HIRBlockExpr) {
         self.block(&stmt.statements);
     }
 

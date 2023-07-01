@@ -11,6 +11,7 @@ lazy_static = "1.4.0"
 clap = { version = "4.2.7", features = ["derive"] }
 dirs = "5.0.1"
 petgraph = "0.6.3"
+anyhow = "1.0.71"
 
 #[dependencies.inkwell]
 #version = "0.1.1"

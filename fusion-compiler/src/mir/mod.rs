@@ -10,7 +10,7 @@ use std::rc::Rc;
 use fusion_compiler::{idx, Idx, IdxVec};
 
 use crate::diagnostics::DiagnosticsBagCell;
-use crate::hir::{FieldIdx, FunctionIdx, HIR, HIRBinaryOperator, HIRCallee, HIRExpression, HIRExpressionKind, HIRFunction, HIRGlobal, HIRLiteralExpression, HIRLiteralValue, HIRStatement, HIRStatementKind, HIRUnaryOperator, IntegerLiteralValue, VariableIdx};
+use crate::hir::{FieldIdx, FunctionIdx, HIR, BinOperator, HIRCallee, HIRExpr, HIRExprKind, HIRFunction, HIRGlobal, HIRLiteralExpression, HIRLiteralValue, HIRStatement, HIRStatementKind, UnOperator, IntegerLiteralValue, VariableIdx};
 use crate::mir::Category::RValue;
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
 use crate::modules::symbols::Function;
@@ -1153,36 +1153,6 @@ impl BodyGen {
                     kind: InstructionKind::PlaceMention(place),
                 })
             }
-            HIRStatementKind::If(if_stmt) => {
-                let cond_value = self.gen_as_operand(&if_stmt.condition);
-                self.enter_scope();
-                let current_block = self.current_block;
-                let then_block = self.push_basic_block();
-                let else_block = if_stmt.else_.as_ref().map(|_| self.push_basic_block());
-                let end_block = self.push_basic_block();
-                self.set_current_block(current_block);
-                let terminator = Terminator::if_(stmt.span.clone(), cond_value, then_block, else_block.clone().unwrap_or(end_block));
-                self.push_terminator(terminator);
-                self.set_current_block(then_block);
-                self.gen_stmts(&if_stmt.then);
-                self.push_terminator(Terminator {
-                    span: Some(stmt.span.clone()),
-                    kind: TerminatorKind::Goto(end_block),
-                });
-                self.exit_scope();
-                if let Some(else_block) = else_block {
-                    self.enter_scope();
-                    self.set_current_block(else_block);
-                    self.gen_stmts(&if_stmt.else_.as_ref().unwrap());
-                    self.exit_scope();
-                }
-                self.set_current_block(end_block);
-            }
-            HIRStatementKind::Block(stmt) => {
-                self.enter_scope();
-                self.gen_stmts(&stmt.statements);
-                self.exit_scope();
-            }
             HIRStatementKind::While(while_stmt) => {
                 let condition_block = self.push_basic_block();
                 let body_block = self.push_basic_block();
@@ -1218,7 +1188,7 @@ impl BodyGen {
         }
     }
 
-    pub fn gen_as_operand(&mut self, expr: &HIRExpression) -> Operand {
+    pub fn gen_as_operand(&mut self, expr: &HIRExpr) -> Operand {
         let category = Category::from_expr_kind(&expr.kind);
         match category {
             Category::RValue | Category::Place => {
@@ -1231,9 +1201,9 @@ impl BodyGen {
     }
 
 
-    pub fn gen_as_constant(&self, expr: &HIRExpression) -> ConstantValue {
+    pub fn gen_as_constant(&self, expr: &HIRExpr) -> ConstantValue {
         match &expr.kind {
-            HIRExpressionKind::Literal(lit_expr) => {
+            HIRExprKind::Literal(lit_expr) => {
                 match &lit_expr.value {
                     HIRLiteralValue::Integer(value) =>
                         {
@@ -1261,7 +1231,7 @@ impl BodyGen {
         }
     }
 
-    pub fn gen_as_temp(&mut self, expr: &HIRExpression) -> Place {
+    pub fn gen_as_temp(&mut self, expr: &HIRExpr) -> Place {
         let category = Category::from_expr_kind(&expr.kind);
         match category {
             Category::Place => self.gen_as_place(expr),
@@ -1274,25 +1244,25 @@ impl BodyGen {
         }
     }
 
-    pub fn gen_as_place(&mut self, expr: &HIRExpression) -> Place {
+    pub fn gen_as_place(&mut self, expr: &HIRExpr) -> Place {
         let category = Category::from_expr_kind(&expr.kind);
         match category {
             Category::Place => {
                 match &expr.kind {
-                    HIRExpressionKind::Variable(var_expr) => {
+                    HIRExprKind::Variable(var_expr) => {
                         let local = self.body.scope.get_variable(&var_expr.variable_id).unwrap();
                         Place {
                             local: *local,
                             projection: None,
                         }
                     }
-                    HIRExpressionKind::Call(_) |
+                    HIRExprKind::Call(_) |
 
 
-                    HIRExpressionKind::FieldAccess(_) |
-                    HIRExpressionKind::Ref(_) |
-                    HIRExpressionKind::Deref(_) |
-                    HIRExpressionKind::Index(_) => {
+                    HIRExprKind::FieldAccess(_) |
+                    HIRExprKind::Ref(_) |
+                    HIRExprKind::Deref(_) |
+                    HIRExprKind::Index(_) => {
                         let mut place = self.new_temp_place(&expr.ty);
                         self.gen_expr_into(expr, &mut place);
                         place
@@ -1309,19 +1279,19 @@ impl BodyGen {
         }
     }
 
-    pub fn gen_expr_into(&mut self, expr: &HIRExpression, place: &mut Place) {
+    pub fn gen_expr_into(&mut self, expr: &HIRExpr, place: &mut Place) {
         match &expr.kind {
-            HIRExpressionKind::FieldAccess(field_access_expr) => {
+            HIRExprKind::FieldAccess(field_access_expr) => {
                 let mut base = self.gen_as_place(&field_access_expr.target);
                 base.projection = Some(Projection::Field(field_access_expr.field_id));
                 *place = base;
             }
-            HIRExpressionKind::Deref(deref_expr) => {
+            HIRExprKind::Deref(deref_expr) => {
                 let mut base = self.gen_as_place(&deref_expr.target);
                 base.projection = Some(Projection::Deref);
                 *place = base;
             }
-            HIRExpressionKind::Index(index_expr) => {
+            HIRExprKind::Index(index_expr) => {
                 let base = self.gen_as_place(&index_expr.target);
                 let index = self.gen_as_place(&index_expr.index);
                 let projection = Projection::Index(index.local);
@@ -1330,7 +1300,7 @@ impl BodyGen {
                     projection: Some(projection),
                 };
             }
-            HIRExpressionKind::Call(call_expr) => {
+            HIRExprKind::Call(call_expr) => {
                 let function_id = match &call_expr.callee {
                     HIRCallee::Function(function_id) => *function_id,
                     _ => panic!("Cannot call non-function"),
@@ -1347,6 +1317,37 @@ impl BodyGen {
                     }
                 );
             }
+            HIRExprKind::If(if_expr) => {
+                let cond_value = self.gen_as_operand(&if_expr.condition);
+                self.enter_scope();
+                let current_block = self.current_block;
+                let then_block = self.push_basic_block();
+                let else_block = if_expr.else_.as_ref().map(|_| self.push_basic_block());
+                let end_block = self.push_basic_block();
+                self.set_current_block(current_block);
+                let terminator = Terminator::if_(expr.span.clone(), cond_value, then_block, else_block.clone().unwrap_or(end_block));
+                self.push_terminator(terminator);
+                self.set_current_block(then_block);
+                self.gen_expr_into(&if_expr.then, place);
+                self.push_terminator(Terminator {
+                    span: Some(expr.span.clone()),
+                    kind: TerminatorKind::Goto(end_block),
+                });
+                self.exit_scope();
+                if let Some(else_block) = else_block {
+                    self.enter_scope();
+                    self.set_current_block(else_block);
+                    self.gen_expr_into(&if_expr.else_.as_ref().unwrap(), place);
+                    self.exit_scope();
+                }
+                self.set_current_block(end_block);
+
+            }
+            HIRExprKind::Block(block_expr) => {
+                self.enter_scope();
+                self.gen_stmts(&block_expr.statements);
+                self.exit_scope();
+            }
             _ => {
                 let rvalue = self.gen_as_rvalue(expr);
                 self.push_instruction(Instruction {
@@ -1360,9 +1361,9 @@ impl BodyGen {
         }
     }
 
-    pub fn gen_as_rvalue(&mut self, expr: &HIRExpression) -> Rvalue {
+    pub fn gen_as_rvalue(&mut self, expr: &HIRExpr) -> Rvalue {
         match &expr.kind {
-            HIRExpressionKind::Assignment(assign_expr) => {
+            HIRExprKind::Assignment(assign_expr) => {
                 let place = self.gen_as_place(&assign_expr.target);
                 let value = self.gen_as_rvalue(&assign_expr.value);
                 self.push_instruction(Instruction {
@@ -1374,50 +1375,50 @@ impl BodyGen {
                 });
                 Rvalue::Use(Operand::Copy(place))
             }
-            HIRExpressionKind::Binary(bin_expr) => {
+            HIRExprKind::Binary(bin_expr) => {
                 let left = self.gen_as_operand(&bin_expr.left);
                 let right = self.gen_as_operand(&bin_expr.right);
                 let op = match bin_expr.op {
-                    HIRBinaryOperator::Add => BinOp::Add,
-                    HIRBinaryOperator::Subtract => BinOp::Sub,
-                    HIRBinaryOperator::Multiply => BinOp::Mul,
-                    HIRBinaryOperator::Divide => BinOp::Div,
-                    HIRBinaryOperator::Modulo => BinOp::Mod,
-                    HIRBinaryOperator::BitwiseAnd => BinOp::And,
-                    HIRBinaryOperator::BitwiseOr => BinOp::Or,
-                    HIRBinaryOperator::BitwiseXor => BinOp::Xor,
-                    HIRBinaryOperator::Equals => BinOp::Eq,
-                    HIRBinaryOperator::NotEquals => BinOp::Neq,
-                    HIRBinaryOperator::LessThan => BinOp::Lt,
-                    HIRBinaryOperator::LessThanOrEqual => BinOp::Leq,
-                    HIRBinaryOperator::GreaterThan => BinOp::Gt,
-                    HIRBinaryOperator::GreaterThanOrEqual => BinOp::Geq,
-                    HIRBinaryOperator::LogicalAnd => BinOp::And,
+                    BinOperator::Add => BinOp::Add,
+                    BinOperator::Subtract => BinOp::Sub,
+                    BinOperator::Multiply => BinOp::Mul,
+                    BinOperator::Divide => BinOp::Div,
+                    BinOperator::Modulo => BinOp::Mod,
+                    BinOperator::BitwiseAnd => BinOp::And,
+                    BinOperator::BitwiseOr => BinOp::Or,
+                    BinOperator::BitwiseXor => BinOp::Xor,
+                    BinOperator::Equals => BinOp::Eq,
+                    BinOperator::NotEquals => BinOp::Neq,
+                    BinOperator::LessThan => BinOp::Lt,
+                    BinOperator::LessThanOrEqual => BinOp::Leq,
+                    BinOperator::GreaterThan => BinOp::Gt,
+                    BinOperator::GreaterThanOrEqual => BinOp::Geq,
+                    BinOperator::LogicalAnd => BinOp::And,
                 };
                 Rvalue::BinaryOp(op, (left, right))
             }
-            HIRExpressionKind::Unary(un_expr) => {
+            HIRExprKind::Unary(un_expr) => {
                 let operand = self.gen_as_operand(&un_expr.operand);
                 let op = match un_expr.op {
-                    HIRUnaryOperator::Negate => UnOp::Neg,
-                    HIRUnaryOperator::BitwiseNot => UnOp::Not,
+                    UnOperator::Negate => UnOp::Neg,
+                    UnOperator::BitwiseNot => UnOp::Not,
                 };
                 Rvalue::UnaryOp(op, operand)
             }
-            HIRExpressionKind::StructInit(struct_init_expr) => {
+            HIRExprKind::StructInit(struct_init_expr) => {
                 let mut fields = vec![];
                 for field in &struct_init_expr.fields {
                     fields.push((field.field_id, self.gen_as_operand(&field.value)));
                 }
                 Rvalue::Struct(fields)
             }
-            HIRExpressionKind::Ref(expr) => {
+            HIRExprKind::Ref(expr) => {
                 Rvalue::AddressOf(Mutability::Immutable, self.gen_as_place(&expr.expression))
             }
-            HIRExpressionKind::Cast(_) => {
+            HIRExprKind::Cast(_) => {
                 unimplemented!("Cast")
             }
-            HIRExpressionKind::Literal(
+            HIRExprKind::Literal(
                 HIRLiteralExpression {
                     value: HIRLiteralValue::String(value),
                     ..
@@ -1527,26 +1528,26 @@ pub enum Category {
 }
 
 impl Category {
-    pub fn from_expr_kind(expr: &HIRExpressionKind) -> Self {
+    pub fn from_expr_kind(expr: &HIRExprKind) -> Self {
         match expr {
-            HIRExpressionKind::Literal(literal) => {
+            HIRExprKind::Literal(literal) => {
                 match &literal.value {
                     HIRLiteralValue::String(_) => Category::RValue,
                     _ => Category::Constant,
                 }
             }
-            HIRExpressionKind::Void => Category::Constant,
-            HIRExpressionKind::Variable(_) |
-            HIRExpressionKind::FieldAccess(_) |
-            HIRExpressionKind::Index(_) |
-            HIRExpressionKind::Deref(_) => Category::Place,
-            HIRExpressionKind::Unary(_) |
-            HIRExpressionKind::Binary(_) |
-            HIRExpressionKind::Call(_) |
-            HIRExpressionKind::Cast(_) |
-            HIRExpressionKind::StructInit(_) |
-            HIRExpressionKind::Assignment(_) |
-            HIRExpressionKind::Ref(_) => Category::RValue,
+            HIRExprKind::Void => Category::Constant,
+            HIRExprKind::Variable(_) |
+            HIRExprKind::FieldAccess(_) |
+            HIRExprKind::Index(_) |
+            HIRExprKind::Deref(_) => Category::Place,
+            HIRExprKind::Unary(_) |
+            HIRExprKind::Binary(_) |
+            HIRExprKind::Call(_) |
+            HIRExprKind::Cast(_) |
+            HIRExprKind::StructInit(_) |
+            HIRExprKind::Assignment(_) |
+            HIRExprKind::Ref(_) => Category::RValue,
         }
     }
 }

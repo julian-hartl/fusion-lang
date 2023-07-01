@@ -4,12 +4,14 @@ use std::fs::File;
 use std::hash::Hash;
 use std::io::Write;
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+
+use anyhow::Result;
 
 use crate::ast::Ast;
 use crate::ast::lexer::Lexer;
-use crate::ast::parser::Parser;
+use crate::ast::parser::{Parser, ParseResult};
 use crate::diagnostics::{DiagnosticsBag, DiagnosticsBagCell};
 use crate::diagnostics::printer::DiagnosticsPrinter;
 use crate::formatting::Formatter;
@@ -17,7 +19,16 @@ use crate::hir::{HIR, HIRGen};
 use crate::mir::{MIR, MIRGen};
 use crate::modules::scopes::{GlobalScope, GlobalScopeCell};
 use crate::modules::symbols::ModuleIdx;
+use crate::perf::PerfMeasurement;
 use crate::text::SourceText;
+
+pub trait Parseable {
+    type Error: std::error::Error + 'static + Send + Sync;
+    fn get_content(&self) -> Result<String, Self::Error>;
+    fn join(&self, path: &str) -> Self;
+    fn describes_module(&self) -> bool;
+    fn with_extension(&self, ext: &str) -> Self;
+}
 
 pub struct SourceTree {
     pub asts: HashMap<ModuleIdx, (Ast, SourceText)>,
@@ -37,34 +48,27 @@ impl SourceTree {
         }
     }
 
-    fn parse_ast(&mut self, path: &Path, id: ModuleIdx) -> Result<(), std::io::Error> {
+    fn parse_ast<P>(&mut self, parseable: &P, id: ModuleIdx) -> Result<()> where P: Parseable {
         self.global_scope.borrow_mut().set_current_module(id);
         self.diagnostics_bag.borrow_mut().set_current_module(id);
-        let text = std::fs::read_to_string(path)?;
+        let text = parseable.get_content()?;
         let source_text = SourceText::new(text);
         let mut lexer = Lexer::new(&source_text);
-        let mut tokens = Vec::new();
-        while let Some(token) = lexer.next_token() {
-            tokens.push(token);
-        }
-        let mut root_ast = Ast::new();
-        let mut parser = Parser::new(
-            tokens,
+        let mut token_stream = lexer.token_stream();
+        let parser = Parser::new(
+            token_stream,
             Rc::clone(&self.diagnostics_bag),
             Rc::clone(&self.global_scope),
-            &mut root_ast,
         );
-        parser.parse();
-        let module_decls = parser.get_encountered_module_declarations().clone();
-        drop(parser);
+        let ParseResult { ast: root_ast, module_declarations: module_decls } = parser.parse();
 
         self.asts.insert(id, (root_ast, source_text));
         for mod_id in module_decls {
             self.global_scope.borrow_mut().set_current_module(id);
             self.diagnostics_bag.borrow_mut().set_current_module(id);
             let mod_name = &mod_id.span.literal;
-            let mut mod_path = path.parent().unwrap().join(mod_name);
-            if mod_path.is_dir() {
+            let mut mod_path = parseable.join(mod_name);
+            if mod_path.describes_module() {
                 // fallback to mod.fs
                 mod_path = mod_path.join("mod.fs");
             } else {
@@ -92,11 +96,11 @@ impl SourceTree {
 
     pub fn check_diagnostics(
         &self,
-    ) -> Result<(), ()> {
+    ) -> Result<(), DiagnosticsBag> {
         let diagnostics_bag = self.diagnostics_bag.borrow();
         if diagnostics_bag.diagnostics.len() > 0 {
             self.print_diagnostics();
-            Err(())
+            Err(diagnostics_bag.clone())
         } else {
             Ok(())
         }
@@ -126,8 +130,30 @@ pub struct CompilationUnit {
     pub scope: GlobalScopeCell,
 }
 
+impl Parseable for PathBuf {
+    type Error = std::io::Error;
+
+    fn get_content(&self) -> Result<String, Self::Error> {
+        std::fs::read_to_string(self)
+    }
+
+    fn join(&self, path: &str) -> Self {
+        self.join(path)
+    }
+
+    fn describes_module(&self) -> bool {
+        self.is_dir()
+    }
+
+    fn with_extension(&self, ext: &str) -> Self {
+        self.with_extension(ext)
+    }
+}
+
 impl CompilationUnit {
-    pub fn compile(input_file: &Path) -> Result<CompilationUnit, ()> {
+    pub fn compile<P>(input_file: &P) -> Result<CompilationUnit, DiagnosticsBag> where P: Parseable {
+        let mut compilation_measurement = PerfMeasurement::new(String::from("Compilation"));
+        compilation_measurement.start();
         let scope: Rc<RefCell<GlobalScope>> = Rc::new(RefCell::new(GlobalScope::new()));
         let scope_ref = scope.borrow();
         let root_module_id = scope_ref.root_module;
@@ -163,6 +189,8 @@ impl CompilationUnit {
             scope.clone(),
         );
         let mir = mir_gen.construct(&hir);
+        compilation_measurement.end();
+        println!("{}", compilation_measurement);
         mir.output_graphviz(
             scope.borrow().deref(),
             "mir.dot",

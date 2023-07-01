@@ -17,6 +17,7 @@ mod hir;
 mod interpreter;
 mod cli;
 mod modules;
+mod perf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = cli::Cli::parse();

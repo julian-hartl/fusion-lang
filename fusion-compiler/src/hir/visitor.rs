@@ -1,4 +1,4 @@
-use crate::hir::{FunctionIdx, HIR, HIRAssignmentExpression, HIRBinaryExpression, HIRBinaryOperator, HIRBlockStatement, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRExpression, HIRExpressionKind, HIRExpressionStatement, HIRIfStatement, HIRIndexExpression, HIRLiteralExpression, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStatementKind, HIRStructInitExpression, HIRUnaryExpression, HIRUnaryOperator, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileStatement};
+use crate::hir::{FunctionIdx, HIR, HIRAssignmentExpression, HIRBinaryExpression, BinOperator, HIRBlockExpr, HIRCallExpression, HIRCastExpression, HIRDerefExpression, HIRExpr, HIRExprKind, HIRExpressionStatement, HIRIfExpr, HIRIndexExpression, HIRLiteralExpression, HIRParenthesizedExpression, HIRRefExpression, HIRReturnStatement, HIRStatement, HIRStatementKind, HIRStructInitExpression, HIRUnaryExpression, UnOperator, HIRVariableDeclarationStatement, HIRVariableExpression, HIRWhileExpr};
 
 pub trait HIRVisitor {
     fn visit(&mut self, hir: &HIR) {
@@ -52,51 +52,51 @@ pub trait HIRVisitor {
         self.visit_expr(&stmt.expression);
     }
     fn visit_variable_declaration_stmt(&mut self, stmt: &HIRVariableDeclarationStatement);
-    fn visit_if_stmt(&mut self, stmt: &HIRIfStatement);
-    fn visit_while_stmt(&mut self, stmt: &HIRWhileStatement);
-    fn visit_block_stmt(&mut self, stmt: &HIRBlockStatement);
+    fn visit_if_stmt(&mut self, stmt: &HIRIfExpr);
+    fn visit_while_stmt(&mut self, stmt: &HIRWhileExpr);
+    fn visit_block_stmt(&mut self, stmt: &HIRBlockExpr);
 
-    fn visit_expr(&mut self, expr: &HIRExpression) {
+    fn visit_expr(&mut self, expr: &HIRExpr) {
         self.default_visit_expr(expr);
     }
 
-    fn default_visit_expr(&mut self, expr: &HIRExpression) {
+    fn default_visit_expr(&mut self, expr: &HIRExpr) {
         match &expr.kind {
-            HIRExpressionKind::Binary(expr) => {
+            HIRExprKind::Binary(expr) => {
                 self.visit_binary_expr(expr);
             }
-            HIRExpressionKind::Unary(expr) => {
+            HIRExprKind::Unary(expr) => {
                 self.visit_unary_expr(expr);
             }
-            HIRExpressionKind::Literal(expr) => {
+            HIRExprKind::Literal(expr) => {
                 self.visit_literal_expr(expr);
             }
-            HIRExpressionKind::Variable(expr) => {
+            HIRExprKind::Variable(expr) => {
                 self.visit_variable_expr(expr);
             }
-            HIRExpressionKind::Assignment(expr) => {
+            HIRExprKind::Assignment(expr) => {
                 self.visit_assignment_expr(expr);
             }
-            HIRExpressionKind::Call(expr) => {
+            HIRExprKind::Call(expr) => {
                 self.visit_call_expr(expr);
             }
-            HIRExpressionKind::FieldAccess(_) => {}
-            HIRExpressionKind::Void => {
+            HIRExprKind::FieldAccess(_) => {}
+            HIRExprKind::Void => {
                 self.visit_void_expr();
             }
-            HIRExpressionKind::Ref(expr) => {
+            HIRExprKind::Ref(expr) => {
                 self.visit_ref_expr(expr);
             }
-            HIRExpressionKind::Deref(expr) => {
+            HIRExprKind::Deref(expr) => {
                 self.visit_deref_expr(expr);
             }
-            HIRExpressionKind::Cast(expr) => {
+            HIRExprKind::Cast(expr) => {
                 self.visit_cast_expr(expr);
             }
-            HIRExpressionKind::StructInit(expr) => {
+            HIRExprKind::StructInit(expr) => {
                 self.visit_struct_init_expr(expr);
             }
-            HIRExpressionKind::Index(expr) => {
+            HIRExprKind::Index(expr) => {
                 self.visit_index_expr(expr);
             }
         }

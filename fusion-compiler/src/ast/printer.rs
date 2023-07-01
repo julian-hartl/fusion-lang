@@ -1,4 +1,5 @@
 use std::fmt::format;
+use clap::builder::Str;
 
 use termion::color;
 
@@ -95,13 +96,13 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.ast
     }
 
-    fn visit_mod_decl_statement(&mut self, mod_decl_stmt: &ASTModDeclStatement) {
+    fn visit_module_declaration(&mut self, mod_decl_stmt: &ModuleDeclaration) {
         self.add_keyword("mod");
         self.add_whitespace();
         self.add_text(&mod_decl_stmt.identifier.span.literal);
     }
 
-    fn visit_struct_decl_statement(&mut self, struct_decl_stmt: &ASTStructDeclStatement) {
+    fn visit_struct_declaration(&mut self, struct_decl_stmt: &StructDeclaration) {
         self.add_keyword("struct");
         self.add_whitespace();
         self.add_text(&struct_decl_stmt.identifier.span.literal);
@@ -121,7 +122,7 @@ impl ASTVisitor for ASTPrinter<'_> {
     }
 
 
-    fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement) {
+    fn visit_function_declaration(&mut self, func_decl_statement: &FunctionDeclaration) {
         self.add_keyword("func");
         self.add_whitespace();
         self.add_text(&func_decl_statement.identifier.span.literal);
@@ -136,45 +137,36 @@ impl ASTVisitor for ASTPrinter<'_> {
                 self.add_text(",");
                 self.add_whitespace();
             }
-            match parameter {
-                FuncDeclParameter::Normal(parameter) => {
-                    self.add_text(&parameter.identifier.span.literal);
-                    self.add_type_annotation(&parameter.type_annotation);
-                }
-                FuncDeclParameter::Self_(_) => {
-                    self.add_keyword("self");
-                }
-            }
+            self.add_text(&parameter.identifier.span.literal);
+            self.add_type_annotation(&parameter.type_annotation);
         }
         if !are_parameters_empty {
             self.add_text(")");
             self.add_whitespace();
         }
         if let Some(body) = &func_decl_statement.body {
-            for statement in body {
-                self.visit_statement(statement);
-            }
+            self.visit_block_expr(body);
         }
     }
-    fn visit_return_statement(&mut self, return_statement: &ASTReturnStatement, stmt: &ASTStatement) {
+    fn visit_return_statement(&mut self, return_statement: &ReturnStmt) {
         self.add_keyword("return");
-        if let Some(expression) = &return_statement.return_value {
+        if let Some(expression) = &return_statement.expr {
             self.add_whitespace();
             self.visit_expression(expression);
         }
     }
-    fn visit_while_statement(&mut self, while_statement: &ASTWhileStatement) {
+    fn visit_while_expr(&mut self, while_expr: &WhileExpr) {
         self.add_keyword("while");
         self.add_whitespace();
-        self.visit_expression(&while_statement.condition);
+        self.visit_expression(&while_expr.condition);
         self.add_whitespace();
-        self.visit_statement(&while_statement.body);
+        self.visit_block_expr(&while_expr.body);
     }
-    fn visit_block_statement(&mut self, block_statement: &ASTBlockStatement) {
+    fn visit_block_expr(&mut self, block_expr: &BlockExpr) {
         self.add_text("{");
         self.add_newline();
         self.indent += 1;
-        for statement in &block_statement.statements {
+        for statement in &block_expr.stmts {
             self.visit_statement(statement);
         }
         self.indent -= 1;
@@ -182,21 +174,21 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.add_text("}");
     }
 
-    fn visit_if_statement(&mut self, if_statement: &ASTIfStatement) {
+    fn visit_if_expr(&mut self, if_statement: &IfExpr) {
         self.add_keyword("if");
         self.add_whitespace();
         self.visit_expression(&if_statement.condition);
         self.add_whitespace();
-        self.visit_statement(&if_statement.then_branch);
+        self.visit_block_expr(&if_statement.then_branch);
 
         if let Some(else_branch) = &if_statement.else_branch {
             self.add_keyword("else");
             self.add_whitespace();
-            self.visit_statement(&else_branch.else_statement);
+            self.visit_block_expr(&else_branch.expr);
         }
     }
 
-    fn visit_let_statement(&mut self, let_statement: &ASTLetStatement, statement: &ASTStatement) {
+    fn visit_let_statement(&mut self, let_statement: &LetStmt, statement: &Stmt) {
         self.add_keyword("let");
         self.add_whitespace();
         self.add_text(
@@ -210,7 +202,7 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.visit_expression(&let_statement.initializer);
     }
 
-    fn visit_statement(&mut self, statement: &ASTStatement) {
+    fn visit_statement(&mut self, statement: &Stmt) {
         self.add_padding();
         Self::do_visit_statement(self, statement);
         self.result.push_str(&format!("{}\n",
@@ -218,14 +210,14 @@ impl ASTVisitor for ASTPrinter<'_> {
         ));
     }
 
-    fn visit_index_expression(&mut self, index_expression: &ASTIndexExpression, expr: &ASTExpression) {
+    fn visit_index_expression(&mut self, index_expression: &IndexExpr, expr: &Expr) {
         self.visit_expression(&index_expression.target);
         self.add_text("[");
         self.visit_expression(&index_expression.index);
         self.add_text("]");
     }
 
-    fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression) {
+    fn visit_struct_init_expression(&mut self, struct_init_expression: &StructInitExpr, expr: &Expr) {
         self.add_text(&struct_init_expression.identifier.to_string());
         self.add_text("{");
         for (i, field_init) in struct_init_expression.fields.iter().enumerate() {
@@ -241,13 +233,13 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.add_text("}");
     }
 
-    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression) {
+    fn visit_member_access_expression(&mut self, member_access_expression: &MemberAccessExpr, expr: &Expr) {
         self.visit_expression(&member_access_expression.expr);
         self.add_text(".");
         self.add_text(&member_access_expression.member.span.literal);
     }
 
-    fn visit_cast_expression(&mut self, cast_expression: &ASTCastExpression, expr: &ASTExpression) {
+    fn visit_cast_expression(&mut self, cast_expression: &CastExpr, expr: &Expr) {
         self.visit_expression(&cast_expression.expr);
         self.add_whitespace();
         self.add_text("as");
@@ -255,30 +247,30 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.add_type(format!("{}", &cast_expression.ty).as_str());
     }
 
-    fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression) {
+    fn visit_char_expression(&mut self, char_expression: &CharExpr, expr: &Expr) {
         self.add_string("'");
         self.add_string(&char_expression.value.to_string());
         self.add_string("'");
     }
 
-    fn visit_deref_expression(&mut self, deref_expression: &ASTDerefExpression) {
+    fn visit_deref_expression(&mut self, deref_expression: &DerefExpr) {
         self.add_text("*");
         self.visit_expression(&deref_expression.expr);
     }
 
-    fn visit_ref_expression(&mut self, ref_expression: &ASTRefExpression) {
+    fn visit_ref_expression(&mut self, ref_expression: &RefExpr) {
         self.add_text("&");
         self.visit_expression(&ref_expression.expr);
     }
 
 
-    fn visit_string_expression(&mut self, string_expression: &ASTStringExpression, expr: &ASTExpression) {
+    fn visit_string_expression(&mut self, string_expression: &StringExpr, expr: &Expr) {
         self.add_string("\"");
         self.add_string(&string_expression.string.to_raw_string());
         self.add_string("\"");
     }
 
-    fn visit_call_expression(&mut self, call_expression: &ASTCallExpression, expr: &ASTExpression) {
+    fn visit_call_expression(&mut self, call_expression: &CallExpr, expr: &Expr) {
         self.visit_expression(&call_expression.callee);
         self.add_text("(");
         for (i, argument) in call_expression.arguments.iter().enumerate() {
@@ -291,27 +283,27 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.add_text(")");
     }
 
-    fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression, expr: &ASTExpression) {
-        self.visit_expression(&assignment_expression.assignee);
+    fn visit_assignment_expression(&mut self, assignment_expression: &AssignExpr, expr: &Expr) {
+        self.visit_expression(&assignment_expression.left);
         self.add_whitespace();
         self.add_text("=");
         self.add_whitespace();
-        self.visit_expression(&assignment_expression.expression);
+        self.visit_expression(&assignment_expression.right);
     }
 
-    fn visit_identifier_expression(&mut self, variable_expression: &ASTIdentifierExpression, expr: &ASTExpression) {
+    fn visit_identifier_expression(&mut self, variable_expression: &IdenExpr, expr: &Expr) {
         self.result.push_str(&format!("{}{}",
                                       Self::VARIABLE_COLOR.fg_str(),
                                       variable_expression.identifier.to_string(), ));
     }
 
-    fn visit_number_expression(&mut self, number: &ASTNumberExpression, expr: &ASTExpression) {
+    fn visit_number_expression(&mut self, number: &NumberExpr, expr: &Expr) {
         self.result.push_str(&format!("{}{}",
                                       Self::NUMBER_COLOR.fg_str(),
                                       number.number, ));
     }
 
-    fn visit_boolean_expression(&mut self, boolean: &ASTBooleanExpression, expr: &ASTExpression) {
+    fn visit_boolean_expression(&mut self, boolean: &BoolExpr, expr: &Expr) {
         self.add_boolean(boolean.value);
     }
 
@@ -321,14 +313,14 @@ impl ASTVisitor for ASTPrinter<'_> {
                                       span.literal, ));
     }
 
-    fn visit_unary_expression(&mut self, unary_expression: &ASTUnaryExpression, expr: &ASTExpression) {
+    fn visit_unary_expression(&mut self, unary_expression: &UnaryExpr, expr: &Expr) {
         self.result.push_str(&format!("{}{}",
                                       Self::TEXT_COLOR.fg_str(),
                                       unary_expression.operator.token.span.literal, ));
         self.visit_expression(&unary_expression.operand);
     }
 
-    fn visit_binary_expression(&mut self, binary_expression: &ASTBinaryExpression, expr: &ASTExpression) {
+    fn visit_binary_expression(&mut self, binary_expression: &BinExpr, expr: &Expr) {
         self.visit_expression(&binary_expression.left);
         self.add_whitespace();
         self.result.push_str(&format!("{}{}",
@@ -338,11 +330,11 @@ impl ASTVisitor for ASTPrinter<'_> {
         self.visit_expression(&binary_expression.right);
     }
 
-    fn visit_parenthesized_expression(&mut self, parenthesized_expression: &ASTParenthesizedExpression, expr: &ASTExpression) {
+    fn visit_parenthesized_expression(&mut self, parenthesized_expression: &ParenExpr, expr: &Expr) {
         self.result.push_str(&format!("{}{}",
                                       Self::TEXT_COLOR.fg_str(),
                                       "(", ));
-        self.visit_expression(&parenthesized_expression.expression);
+        self.visit_expression(&parenthesized_expression.expr);
         self.result.push_str(&format!("{}{}",
                                       Self::TEXT_COLOR.fg_str(),
                                       ")", ));

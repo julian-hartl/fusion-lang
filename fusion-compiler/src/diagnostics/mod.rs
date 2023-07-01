@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use crate::ast::lexer::token::{Token, TokenKind};
 
-use crate::ast::lexer::{Token, TokenKind};
 use crate::ast::QualifiedIdentifier;
 use crate::modules::symbols::ModuleIdx;
 use crate::text::span::{TextLocation, TextSpan};
@@ -31,7 +31,7 @@ impl Diagnostic {
 
 pub type DiagnosticsBagCell = Rc<RefCell<DiagnosticsBag>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DiagnosticsBag {
     pub diagnostics: Vec<Diagnostic>,
     current_module_id: ModuleIdx,
@@ -262,14 +262,20 @@ impl DiagnosticsBag {
     pub fn report_integer_literal_out_of_range(&mut self, span: &TextSpan) {
         self.report_error(format!("Integer literal '{}' out of range", span.literal), span.clone());
     }
+
+    pub fn report_not_allowed_item(&mut self, span: &TextSpan) {
+        self.report_error(format!("Not allowed item '{}'", span.literal), span.clone());
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::compilation::CompilationUnit;
+    use fusion_compiler::Idx;
+    use crate::compilation::{CompilationUnit, Parseable};
     use crate::diagnostics::{Diagnostic, DiagnosticSeverity};
+    use crate::modules::symbols::ModuleIdx;
     use crate::text::SourceText;
-    use crate::text::span::TextSpan;
+    use crate::text::span::{TextLocation, TextSpan};
 
     struct DiagnosticsVerifier {
         actual: Vec<Diagnostic>,
@@ -287,11 +293,30 @@ mod test {
 
         fn compile(input: &str) -> Vec<Diagnostic> {
             let raw = Self::get_raw_text(input);
-            let source_text = SourceText::new(&raw, None);
+            let source_text = SourceText::new(raw);
+            impl Parseable for SourceText {
+                type Error = std::convert::Infallible;
+
+                fn get_content(&self) -> anyhow::Result<String, Self::Error> {
+                    return Ok(self.text.clone());
+                }
+
+                fn join(&self, path: &str) -> Self {
+                    todo!()
+                }
+
+                fn describes_module(&self) -> bool {
+                    return false;
+                }
+
+                fn with_extension(&self, ext: &str) -> Self {
+                    todo!()
+                }
+            }
             let compilation_unit = CompilationUnit::compile(&source_text);
             match compilation_unit {
                 Ok(_) => vec![],
-                Err(e) => e.borrow().diagnostics.clone(),
+                Err(e) => e.diagnostics,
             }
         }
 
@@ -316,7 +341,10 @@ mod test {
                         let literal = &raw_text[start_index..end_index];
                         let span = TextSpan::new(start_index, end_index, literal.to_string());
                         let message = messages[diagnostics.len()].to_string();
-                        let diagnostic = Diagnostic::new(message, span, DiagnosticSeverity::Error);
+                        let diagnostic = Diagnostic::new(message, TextLocation {
+                            span,
+                            module_id: ModuleIdx::new(0),
+                        }, DiagnosticSeverity::Error);
                         diagnostics.push(diagnostic);
                     }
                     _ => {
@@ -333,9 +361,11 @@ mod test {
 
             for (actual, expected) in self.actual.iter().zip(self.expected.iter()) {
                 assert_eq!(actual.message, expected.message, "Expected message '{}', found '{}'", expected.message, actual.message);
-                assert_eq!(actual.location.start, expected.location.start, "Expected start index {}, found {}", expected.location.start, actual.location.start);
-                assert_eq!(actual.location.end, expected.location.end, "Expected end index {}, found {}", expected.location.end, actual.location.end);
-                assert_eq!(actual.location.literal, expected.location.literal, "Expected literal '{}', found '{}'", expected.location.literal, actual.location.literal);
+                let actual_span = &actual.location.span;
+                let expected_span = &expected.location.span;
+                assert_eq!(actual_span.start, expected_span.start, "Expected start index {}, found {}", expected_span.start, actual_span.start);
+                assert_eq!(actual_span.end, expected_span.end, "Expected end index {}, found {}", expected_span.end,  actual_span.end);
+                assert_eq!(actual_span.literal, expected_span.literal, "Expected literal '{}', found '{}'", expected_span.literal,  actual_span.literal);
             }
         }
     }

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use fusion_compiler::IdxVec;
 
-use crate::ast::lexer::Token;
+use crate::ast::lexer::token::Token;
 use crate::ast::QualifiedIdentifier;
 use crate::hir::{FieldIdx, FunctionIdx, StructIdx, VariableIdx};
 use crate::modules::symbols::{Function, FunctionModifier, ModuleIdx, QualifiedName, Struct, StructField, Variable};

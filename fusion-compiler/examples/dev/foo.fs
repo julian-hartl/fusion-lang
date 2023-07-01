@@ -4,5 +4,5 @@ struct Foo {
 }
 
 func foo() -> Foo {
-    Foo { foo: 42, test: true }
+    return Foo { foo: 42, test: true };
 }

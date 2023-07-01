@@ -4,8 +4,11 @@ use std::fmt::{Display, Formatter};
 use fusion_compiler::{idx, Result};
 use fusion_compiler::Idx;
 
-use crate::ast::{Ast, ASTAssignmentExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBooleanExpression, ASTCastExpression, ASTCharExpression, ASTDerefExpression, ASTExpression, ASTExpressionKind, ASTFuncDeclStatement, ASTIdentifierExpression, ASTIndexExpression, ASTLetStatement, ASTMemberAccessExpression, ASTModDeclStatement, ASTNumberExpression, ASTRefExpression, ASTStatement, ASTStatementKind, ASTStringExpression, ASTStructDeclStatement, ASTStructInitExpression, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, FuncDeclParameter, QualifiedIdentifier, TypeSyntax};
-use crate::ast::lexer::{Token, TokenKind};
+use crate::ast;
+use crate::ast::{Ast, FunctionDeclaration, ItemKind, ModuleDeclaration, QualifiedIdentifier, StructDeclaration, TypeSyntax};
+use crate::ast::expr::{BlockExpr, Expr, ExprKind};
+use crate::ast::lexer::token::{Token, TokenKind};
+use crate::ast::stmt::{LetStmt, Stmt, StmtKind};
 use crate::ast::visitor::ASTVisitor;
 use crate::compilation::SourceTree;
 use crate::diagnostics::DiagnosticsBagCell;
@@ -27,7 +30,7 @@ pub struct HIR {
 pub enum HIRGlobal {
     Variable {
         id: VariableIdx,
-        initializer: HIRExpression,
+        initializer: HIRExpr,
     },
 }
 
@@ -53,57 +56,62 @@ pub struct HIRField {
     pub ty: Type,
 }
 
+#[derive(Debug)]
 pub struct HIRStatement {
     pub kind: HIRStatementKind,
     pub span: TextSpan,
 }
 
+#[derive(Debug)]
 pub enum HIRStatementKind {
     Return(HIRReturnStatement),
     Expression(HIRExpressionStatement),
     VariableDeclaration(HIRVariableDeclarationStatement),
-    If(HIRIfStatement),
-    While(HIRWhileStatement),
-    Block(HIRBlockStatement),
-}
-
-pub struct HIRBlockStatement {
-    pub statements: Vec<HIRStatement>,
-}
-
-pub struct HIRReturnStatement {
-    pub expression: HIRExpression,
-}
-
-pub struct HIRExpressionStatement {
-    pub expression: HIRExpression,
-}
-
-pub struct HIRVariableDeclarationStatement {
-    pub variable_id: VariableIdx,
-    pub initializer: HIRExpression,
-}
-
-pub struct HIRIfStatement {
-    pub condition: HIRExpression,
-    pub then: Vec<HIRStatement>,
-    pub else_: Option<Vec<HIRStatement>>,
-}
-
-pub struct HIRWhileStatement {
-    pub condition: HIRExpression,
-    pub body: Vec<HIRStatement>,
 }
 
 #[derive(Debug)]
-pub struct HIRExpression {
-    pub kind: HIRExpressionKind,
+pub struct HIRBlockExpr {
+    pub statements: Vec<HIRStatement>,
+}
+
+#[derive(Debug)]
+pub struct HIRReturnStatement {
+    pub expression: HIRExpr,
+}
+
+#[derive(Debug)]
+pub struct HIRExpressionStatement {
+    pub expression: HIRExpr,
+}
+
+#[derive(Debug)]
+pub struct HIRVariableDeclarationStatement {
+    pub variable_id: VariableIdx,
+    pub initializer: HIRExpr,
+}
+
+#[derive(Debug)]
+pub struct HIRIfExpr {
+    pub condition: Box<HIRExpr>,
+    pub then: Box<HIRExpr>,
+    pub else_: Option<Box<HIRExpr>>,
+}
+
+#[derive(Debug)]
+pub struct HIRWhileExpr {
+    pub condition: Box<HIRExpr>,
+    pub body: Box<HIRExpr>,
+}
+
+#[derive(Debug)]
+pub struct HIRExpr {
+    pub kind: HIRExprKind,
     pub span: TextSpan,
     pub ty: Type,
 }
 
 #[derive(Debug)]
-pub enum HIRExpressionKind {
+pub enum HIRExprKind {
     Literal(HIRLiteralExpression),
     Variable(HIRVariableExpression),
     Assignment(HIRAssignmentExpression),
@@ -116,13 +124,16 @@ pub enum HIRExpressionKind {
     Cast(HIRCastExpression),
     StructInit(HIRStructInitExpression),
     Index(HIRIndexExpression),
+    If(HIRIfExpr),
+    While(HIRWhileExpr),
+    Block(HIRBlockExpr),
     Void,
 }
 
 #[derive(Debug)]
 pub struct HIRIndexExpression {
-    pub target: Box<HIRExpression>,
-    pub index: Box<HIRExpression>,
+    pub target: Box<HIRExpr>,
+    pub index: Box<HIRExpr>,
 }
 
 #[derive(Debug)]
@@ -134,28 +145,28 @@ pub struct HIRStructInitExpression {
 #[derive(Debug)]
 pub struct HIRStructInitField {
     pub field_id: FieldIdx,
-    pub value: HIRExpression,
+    pub value: HIRExpr,
 }
 
 #[derive(Debug)]
 pub struct HIRCastExpression {
-    pub expression: Box<HIRExpression>,
+    pub expression: Box<HIRExpr>,
     pub ty: Type,
 }
 
 #[derive(Debug)]
 pub struct HIRRefExpression {
-    pub expression: Box<HIRExpression>,
+    pub expression: Box<HIRExpr>,
 }
 
 #[derive(Debug)]
 pub struct HIRDerefExpression {
-    pub target: Box<HIRExpression>,
+    pub target: Box<HIRExpr>,
 }
 
 #[derive(Debug)]
 pub struct HIRParenthesizedExpression {
-    pub expression: Box<HIRExpression>,
+    pub expression: Box<HIRExpr>,
 }
 
 #[derive(Debug)]
@@ -199,35 +210,35 @@ pub struct HIRVariableExpression {
 
 #[derive(Debug)]
 pub struct HIRAssignmentExpression {
-    pub target: Box<HIRExpression>,
-    pub value: Box<HIRExpression>,
+    pub target: Box<HIRExpr>,
+    pub value: Box<HIRExpr>,
 }
 
 #[derive(Debug)]
 pub struct HIRBinaryExpression {
-    pub left: Box<HIRExpression>,
-    pub op: HIRBinaryOperator,
-    pub right: Box<HIRExpression>,
+    pub left: Box<HIRExpr>,
+    pub op: BinOperator,
+    pub right: Box<HIRExpr>,
 }
 
-impl Display for HIRBinaryOperator {
+impl Display for BinOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let op = match self {
-            HIRBinaryOperator::Add => "+",
-            HIRBinaryOperator::Subtract => "-",
-            HIRBinaryOperator::Multiply => "*",
-            HIRBinaryOperator::Divide => "/",
-            HIRBinaryOperator::Equals => "==",
-            HIRBinaryOperator::NotEquals => "!=",
-            HIRBinaryOperator::LessThan => "<",
-            HIRBinaryOperator::LessThanOrEqual => "<=",
-            HIRBinaryOperator::GreaterThan => ">",
-            HIRBinaryOperator::GreaterThanOrEqual => ">=",
-            HIRBinaryOperator::BitwiseAnd => "&",
-            HIRBinaryOperator::BitwiseOr => "|",
-            HIRBinaryOperator::BitwiseXor => "^",
-            HIRBinaryOperator::Modulo => "%",
-            HIRBinaryOperator::LogicalAnd => "&&",
+            BinOperator::Add => "+",
+            BinOperator::Subtract => "-",
+            BinOperator::Multiply => "*",
+            BinOperator::Divide => "/",
+            BinOperator::Equals => "==",
+            BinOperator::NotEquals => "!=",
+            BinOperator::LessThan => "<",
+            BinOperator::LessThanOrEqual => "<=",
+            BinOperator::GreaterThan => ">",
+            BinOperator::GreaterThanOrEqual => ">=",
+            BinOperator::BitwiseAnd => "&",
+            BinOperator::BitwiseOr => "|",
+            BinOperator::BitwiseXor => "^",
+            BinOperator::Modulo => "%",
+            BinOperator::LogicalAnd => "&&",
         };
         write!(f, "{}", op)
     }
@@ -235,7 +246,7 @@ impl Display for HIRBinaryOperator {
 
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum HIRBinaryOperator {
+pub enum BinOperator {
     Add,
     Subtract,
     Multiply,
@@ -253,31 +264,30 @@ pub enum HIRBinaryOperator {
     LogicalAnd,
 }
 
-impl HIRBinaryOperator {
-
+impl BinOperator {
     pub fn get_type_table(&self) -> Vec<(Type, Type, Type)> {
         match self {
-            HIRBinaryOperator::Add => {
+            BinOperator::Add => {
                 let int_types = Self::get_arithmetic_types();
                 Vec::from(int_types)
             }
-            HIRBinaryOperator::Subtract => {
+            BinOperator::Subtract => {
                 let int_types = Self::get_arithmetic_types();
                 Vec::from(int_types)
             }
-            HIRBinaryOperator::Multiply => {
+            BinOperator::Multiply => {
                 let int_types = Self::get_arithmetic_types();
                 Vec::from(int_types)
             }
-            HIRBinaryOperator::Divide => {
+            BinOperator::Divide => {
                 let int_types = Self::get_arithmetic_types();
                 Vec::from(int_types)
             }
-            HIRBinaryOperator::Modulo => {
+            BinOperator::Modulo => {
                 let int_types = Self::get_arithmetic_types();
                 Vec::from(int_types)
             }
-            HIRBinaryOperator::Equals => {
+            BinOperator::Equals => {
                 let built_in_types = Type::get_built_in_types();
                 let mut types = Vec::with_capacity(built_in_types.len());
                 for ty in built_in_types {
@@ -285,7 +295,7 @@ impl HIRBinaryOperator {
                 }
                 types
             }
-            HIRBinaryOperator::NotEquals => {
+            BinOperator::NotEquals => {
                 let built_in_types = Type::get_built_in_types();
                 let mut types = Vec::with_capacity(built_in_types.len());
                 for ty in built_in_types {
@@ -293,31 +303,31 @@ impl HIRBinaryOperator {
                 }
                 types
             }
-            HIRBinaryOperator::LessThan => {
+            BinOperator::LessThan => {
                 Self::get_number_comparison_types()
             }
-            HIRBinaryOperator::LessThanOrEqual => {
+            BinOperator::LessThanOrEqual => {
                 Self::get_number_comparison_types()
             }
-            HIRBinaryOperator::GreaterThan => {
+            BinOperator::GreaterThan => {
                 Self::get_number_comparison_types()
             }
-            HIRBinaryOperator::GreaterThanOrEqual => {
+            BinOperator::GreaterThanOrEqual => {
                 Self::get_number_comparison_types()
             }
-            HIRBinaryOperator::BitwiseAnd => {
+            BinOperator::BitwiseAnd => {
                 let int_types = Self::get_arithmetic_types();
                 Vec::from(int_types)
             }
-            HIRBinaryOperator::BitwiseOr => {
+            BinOperator::BitwiseOr => {
                 let int_types = Self::get_arithmetic_types();
                 Vec::from(int_types)
             }
-            HIRBinaryOperator::BitwiseXor => {
+            BinOperator::BitwiseXor => {
                 let int_types = Self::get_arithmetic_types();
                 Vec::from(int_types)
             }
-            HIRBinaryOperator::LogicalAnd => {
+            BinOperator::LogicalAnd => {
                 vec![
                     (Type::Bool, Type::Bool, Type::Bool),
                 ]
@@ -347,50 +357,49 @@ impl HIRBinaryOperator {
 }
 
 
-impl From<&ASTBinaryOperator> for HIRBinaryOperator {
-    fn from(op: &ASTBinaryOperator) -> Self {
+impl From<&ast::expr::BinOperator> for BinOperator {
+    fn from(op: &ast::expr::BinOperator) -> Self {
         match op.kind {
-            ASTBinaryOperatorKind::Plus => HIRBinaryOperator::Add,
-            ASTBinaryOperatorKind::Minus => HIRBinaryOperator::Subtract,
-            ASTBinaryOperatorKind::Multiply => HIRBinaryOperator::Multiply,
-            ASTBinaryOperatorKind::Divide => HIRBinaryOperator::Divide,
-            ASTBinaryOperatorKind::Equals => HIRBinaryOperator::Equals,
+            ast::expr::BinOperatorKind::Plus => BinOperator::Add,
+            ast::expr::BinOperatorKind::Minus => BinOperator::Subtract,
+            ast::expr::BinOperatorKind::Multiply => BinOperator::Multiply,
+            ast::expr::BinOperatorKind::Divide => BinOperator::Divide,
+            ast::expr::BinOperatorKind::Equals => BinOperator::Equals,
 
-            ASTBinaryOperatorKind::NotEquals => HIRBinaryOperator::NotEquals,
-            ASTBinaryOperatorKind::LessThan => HIRBinaryOperator::LessThan,
-            ASTBinaryOperatorKind::LessThanOrEqual => HIRBinaryOperator::LessThanOrEqual,
-            ASTBinaryOperatorKind::GreaterThan => HIRBinaryOperator::GreaterThan,
+            ast::expr::BinOperatorKind::NotEquals => BinOperator::NotEquals,
+            ast::expr::BinOperatorKind::LessThan => BinOperator::LessThan,
+            ast::expr::BinOperatorKind::LessThanOrEqual => BinOperator::LessThanOrEqual,
+            ast::expr::BinOperatorKind::GreaterThan => BinOperator::GreaterThan,
 
-            ASTBinaryOperatorKind::GreaterThanOrEqual => HIRBinaryOperator::GreaterThanOrEqual,
-            ASTBinaryOperatorKind::BitwiseAnd => HIRBinaryOperator::BitwiseAnd,
-            ASTBinaryOperatorKind::BitwiseOr => HIRBinaryOperator::BitwiseOr,
-            ASTBinaryOperatorKind::BitwiseXor => HIRBinaryOperator::BitwiseXor,
+            ast::expr::BinOperatorKind::GreaterThanOrEqual => BinOperator::GreaterThanOrEqual,
+            ast::expr::BinOperatorKind::BitwiseAnd => BinOperator::BitwiseAnd,
+            ast::expr::BinOperatorKind::BitwiseOr => BinOperator::BitwiseOr,
+            ast::expr::BinOperatorKind::BitwiseXor => BinOperator::BitwiseXor,
 
-            ASTBinaryOperatorKind::Power => unimplemented!(),
-            ASTBinaryOperatorKind::Modulo => HIRBinaryOperator::Modulo,
-            ASTBinaryOperatorKind::LogicalAnd => HIRBinaryOperator::LogicalAnd,
+            ast::expr::BinOperatorKind::Power => unimplemented!(),
+            ast::expr::BinOperatorKind::Modulo => BinOperator::Modulo,
+            ast::expr::BinOperatorKind::LogicalAnd => BinOperator::LogicalAnd,
         }
     }
 }
 
 #[derive(Debug)]
 pub struct HIRUnaryExpression {
-    pub op: HIRUnaryOperator,
-    pub operand: Box<HIRExpression>,
+    pub op: UnOperator,
+    pub operand: Box<HIRExpr>,
 }
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HIRUnaryOperator {
+pub enum UnOperator {
     Negate,
     BitwiseNot,
 }
 
-impl HIRUnaryOperator {
-
+impl UnOperator {
     pub fn get_type_table(&self) -> Vec<(Type, Type)> {
         match self {
-            HIRUnaryOperator::Negate => {
+            UnOperator::Negate => {
                 let int_types = Type::get_integer_types();
                 let mut types = Vec::with_capacity(int_types.len());
                 for ty in int_types {
@@ -398,7 +407,7 @@ impl HIRUnaryOperator {
                 }
                 types
             }
-            HIRUnaryOperator::BitwiseNot => {
+            UnOperator::BitwiseNot => {
                 let int_types = Type::get_integer_types();
                 let mut types = Vec::with_capacity(int_types.len());
                 for ty in int_types {
@@ -408,24 +417,23 @@ impl HIRUnaryOperator {
             }
         }
     }
-
 }
 
-impl Display for HIRUnaryOperator {
+impl Display for UnOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            HIRUnaryOperator::Negate => "-",
-            HIRUnaryOperator::BitwiseNot => "~",
+            UnOperator::Negate => "-",
+            UnOperator::BitwiseNot => "~",
         };
         write!(f, "{}", s)
     }
 }
 
-impl From<&ASTUnaryOperator> for HIRUnaryOperator {
-    fn from(op: &ASTUnaryOperator) -> Self {
+impl From<&ast::expr::UnOperator> for UnOperator {
+    fn from(op: &ast::expr::UnOperator) -> Self {
         match op.kind {
-            ASTUnaryOperatorKind::Minus => HIRUnaryOperator::Negate,
-            ASTUnaryOperatorKind::BitwiseNot => HIRUnaryOperator::BitwiseNot,
+            ast::expr::UnOperatorKind::Minus => UnOperator::Negate,
+            ast::expr::UnOperatorKind::BitwiseNot => UnOperator::BitwiseNot,
         }
     }
 }
@@ -434,7 +442,7 @@ impl From<&ASTUnaryOperator> for HIRUnaryOperator {
 #[derive(Debug)]
 pub struct HIRCallExpression {
     pub callee: HIRCallee,
-    pub args: Vec<HIRExpression>,
+    pub args: Vec<HIRExpr>,
 }
 
 #[derive(Debug)]
@@ -446,15 +454,16 @@ pub enum HIRCallee {
 
 #[derive(Debug)]
 pub struct HIRFieldAccessExpression {
-    pub target: Box<HIRExpression>,
+    pub target: Box<HIRExpr>,
     pub field_id: FieldIdx,
 }
 
 mod common {
     use fusion_compiler::Result;
 
-    use crate::ast::{ASTFuncDeclStatement, ASTLetStatement, FuncDeclParameter};
-    use crate::ast::lexer::Token;
+    use crate::ast::FunctionDeclaration;
+    use crate::ast::lexer::token::Token;
+    use crate::ast::stmt::{LetStmt, ParameterSyntax};
     use crate::diagnostics::{DiagnosticsBag, DiagnosticsBagCell};
     use crate::hir::{HIRGen, HIRStatementKind, HIRVariableDeclarationStatement, VariableIdx};
     use crate::hir;
@@ -471,23 +480,15 @@ mod common {
         }
     }
 
-    pub fn declare_function(hir_gen: &mut HIRGen, diagnostics_bag: DiagnosticsBagCell, func_decl_statement: &ASTFuncDeclStatement) {
+    pub fn declare_function(hir_gen: &mut HIRGen, diagnostics_bag: DiagnosticsBagCell, func_decl_statement: &FunctionDeclaration) {
         let name = func_decl_statement.identifier.span.literal.clone();
         let parameters = func_decl_statement.parameters.iter().map(|param| {
-            match param {
-                FuncDeclParameter::Normal(param) => {
-                    let name = param.identifier.span.literal.clone();
-                    let ty = hir_gen.resolve_type_syntax(&param.type_annotation.ty);
-                    hir_gen.scope.borrow_mut().declare_variable(name.clone(), ty, param.mut_token.is_some())
-                }
-                FuncDeclParameter::Self_(self_param) => {
-                    diagnostics_bag.borrow_mut().report_self_outside_class(&self_param.span);
-                    hir_gen.scope.borrow_mut().declare_variable("self".to_string(), Type::Void, false)
-                }
-            }
+            let name = param.identifier.span.literal.clone();
+            let ty = hir_gen.resolve_type_syntax(&param.type_annotation.ty);
+            hir_gen.scope.borrow_mut().declare_variable(name.clone(), ty, param.mut_token.is_some())
         }).collect();
-        let return_type = match func_decl_statement.return_type {
-            Some(ref return_type) => {
+        let return_type = match func_decl_statement.return_type.as_ref() {
+            Some(return_type) => {
                 hir_gen.resolve_type_syntax(&return_type.ty)
             }
             None => {
@@ -504,7 +505,7 @@ mod common {
         }
     }
 
-    pub fn declare_variable(hir_gen: &mut HIRGen, stmt: &ASTLetStatement) -> HIRVariableDeclarationStatement {
+    pub fn declare_variable(hir_gen: &mut HIRGen, stmt: &LetStmt) -> HIRVariableDeclarationStatement {
         let static_type = stmt.type_annotation.as_ref().map(|ty| hir_gen.resolve_type_syntax(&ty.ty));
         let initializer = hir_gen.gen_expression(&stmt.initializer);
         let ty = match static_type {
@@ -620,14 +621,14 @@ impl HIRGen {
     fn gen_function_bodies(&mut self, module_id: ModuleIdx, ast: &Ast) {
         self.scope.borrow_mut().set_current_module(module_id);
         self.diagnostics_bag.borrow_mut().set_current_module(module_id);
-        for statement in &ast.statements {
+        for statement in &ast.items {
             match &statement.kind {
-                ASTStatementKind::FuncDecl(stmt) => {
-                    let body = &stmt.body;
+                ItemKind::FunctionDeclaration(decl) => {
+                    let body = &decl.body;
                     if let Some(body) = body {
-                        let function_id = self.scope.borrow_mut().lookup_function_unqualified(&stmt.identifier.span.literal).expect(format!("ICE: function {} not found", stmt.identifier.span.literal).as_str());
+                        let function_id = self.scope.borrow_mut().lookup_function_unqualified(&decl.identifier.span.literal).expect(format!("ICE: function {} not found", decl.identifier.span.literal).as_str());
                         self.scope.borrow_mut().enter_function_scope(function_id);
-                        for stmt in body {
+                        for stmt in body.stmts.iter() {
                             let stmt = self.gen_statement(stmt);
                             self.hir.push_stmt(stmt, function_id);
                         }
@@ -640,58 +641,39 @@ impl HIRGen {
         }
     }
 
-    fn gen_statements(&mut self, stmt: &ASTStatement) -> Vec<HIRStatement> {
+    fn gen_block(&mut self, block: &BlockExpr) -> HIRExpr {
         self.scope.borrow_mut().enter_local_scope();
-        let stmts = match &stmt.kind {
-            ASTStatementKind::Block(block) => {
-                block.statements.iter().map(|stmt| self.gen_statement(stmt)).collect()
-            }
-            _ => {
-                let stmt = self.gen_statement(stmt);
-                vec![stmt]
-            }
-        };
+        let stmts: Vec<HIRStatement> = block.stmts.iter().map(|stmt| self.gen_statement(stmt)).collect();
         self.scope.borrow_mut().exit_local_scope();
-        stmts
+        let ty = stmts
+            .last()
+            .map(|stmt| match &stmt.kind {
+                HIRStatementKind::Expression(expr) => expr.expression.ty.clone(),
+                _ => Type::Void,
+            })
+            .unwrap_or(Type::Void);
+        HIRExpr {
+            kind: HIRExprKind::Block(HIRBlockExpr { statements: stmts }),
+            ty,
+            span: block.span().clone(),
+        }
     }
 
-    fn gen_statement(&mut self, stmt: &ASTStatement) -> HIRStatement {
+    fn gen_statement(&mut self, stmt: &Stmt) -> HIRStatement {
         let kind = match &stmt.kind {
-            ASTStatementKind::Expression(expr) => {
+            StmtKind::Expr(expr) => {
                 let expr = self.gen_expression(expr);
                 HIRStatementKind::Expression(HIRExpressionStatement {
                     expression: expr,
                 })
             }
-            ASTStatementKind::Let(stmt) => {
+            StmtKind::Let(stmt) => {
                 HIRStatementKind::VariableDeclaration(common::declare_variable(self, &stmt))
             }
-            ASTStatementKind::If(stmt) => {
-                let condition = self.gen_expression(&stmt.condition);
-                let then_branch = self.gen_statements(&stmt.then_branch);
-                let else_branch = stmt.else_branch.as_ref().map(|branch| self.gen_statements(&branch.else_statement));
-                HIRStatementKind::If(HIRIfStatement {
-                    condition,
-                    then: then_branch,
-                    else_: else_branch,
-                })
-            }
-            ASTStatementKind::Block(_) => {
-                let statements = self.gen_statements(stmt);
-                HIRStatementKind::Block(HIRBlockStatement { statements })
-            }
-            ASTStatementKind::While(stmt) => {
-                let condition = self.gen_expression(&stmt.condition);
-                let body = self.gen_statements(&stmt.body);
-                HIRStatementKind::While(HIRWhileStatement { condition, body })
-            }
-            ASTStatementKind::FuncDecl(_) => {
-                unreachable!("ICE: function declarations should be handled in gen_function_bodies")
-            }
-            ASTStatementKind::Return(return_stmt) => {
-                let expression = return_stmt.return_value.as_ref().map(|expr| self.gen_expression(expr));
-                let expression = expression.unwrap_or(HIRExpression {
-                    kind: HIRExpressionKind::Void,
+            StmtKind::Return(return_stmt) => {
+                let expression = return_stmt.expr.as_ref().map(|expr| self.gen_expression(expr));
+                let expression = expression.unwrap_or(HIRExpr {
+                    kind: HIRExprKind::Void,
                     ty: Type::Void,
                     span: stmt.span(),
                 });
@@ -709,19 +691,13 @@ impl HIRGen {
                     expression
                 })
             }
-            ASTStatementKind::StructDecl(_) => {
-                unreachable!("ICE: struct declarations should be handled in gather_global_symbols")
-            }
-            ASTStatementKind::ModDecl(_) => {
-                unreachable!()
-            }
         };
         HIRStatement { kind, span: stmt.span() }
     }
 
-    fn gen_expression(&mut self, expr: &ASTExpression) -> HIRExpression {
+    fn gen_expression(&mut self, expr: &Expr) -> HIRExpr {
         let (kind, ty) = match &expr.kind {
-            ASTExpressionKind::Number(expr) => {
+            ExprKind::Number(expr) => {
                 let size = match &expr.size_specifier {
                     None => {
                         IntSize::I32
@@ -768,46 +744,46 @@ impl HIRGen {
                         IntegerLiteralValue::ISize(expr.number as isize)
                     }
                 };
-                let expr = HIRExpressionKind::Literal(HIRLiteralExpression {
+                let expr = HIRExprKind::Literal(HIRLiteralExpression {
                     value: HIRLiteralValue::Integer(literal),
                 });
                 (expr, ty)
             }
-            ASTExpressionKind::String(expr) => {
+            ExprKind::String(expr) => {
                 let ty = Type::StringSlice(false);
-                let expr = HIRExpressionKind::Literal(HIRLiteralExpression {
+                let expr = HIRExprKind::Literal(HIRLiteralExpression {
                     value: HIRLiteralValue::String(expr.string.to_raw_string()),
                 });
                 (expr, ty)
             }
-            ASTExpressionKind::Binary(expr) => {
+            ExprKind::Binary(expr) => {
                 let left = self.gen_expression(&expr.left);
                 let right = self.gen_expression(&expr.right);
-                let op = HIRBinaryOperator::from(&expr.operator);
+                let op = BinOperator::from(&expr.operator);
                 let ty = self.resolve_bin_op_ty(&expr.operator.token.span, &left.ty, &right.ty, &op);
-                let expr = HIRExpressionKind::Binary(HIRBinaryExpression {
+                let expr = HIRExprKind::Binary(HIRBinaryExpression {
                     left: Box::new(left),
                     right: Box::new(right),
                     op,
                 });
                 (expr, ty)
             }
-            ASTExpressionKind::Unary(expr) => {
+            ExprKind::Unary(expr) => {
                 let operand = self.gen_expression(&expr.operand);
-                let op = HIRUnaryOperator::from(&expr.operator);
+                let op = UnOperator::from(&expr.operator);
                 let ty = self.resolve_un_op_ty(&operand.span, &operand.ty, &op);
-                let expr = HIRExpressionKind::Unary(HIRUnaryExpression {
+                let expr = HIRExprKind::Unary(HIRUnaryExpression {
                     operand: Box::new(operand),
                     op,
                 });
                 (expr, ty)
             }
-            ASTExpressionKind::Parenthesized(expr) => {
-                let inner = self.gen_expression(&expr.expression);
+            ExprKind::Parenthesized(expr) => {
+                let inner = self.gen_expression(&expr.expr);
                 let ty = inner.ty.clone();
                 (inner.kind, ty)
             }
-            ASTExpressionKind::Identifier(expr) => {
+            ExprKind::Identifier(expr) => {
                 // todo: for now we assume that the identifier references a variable
                 if expr.identifier.is_qualified() {
                     self.diagnostics_bag.borrow_mut().report_unexpected_qualified_identifier(&expr.identifier);
@@ -819,83 +795,83 @@ impl HIRGen {
                         let scope = self.scope.borrow();
                         let variable = scope.get_variable(&variable_id);
                         let ty = variable.ty.clone();
-                        let expr = HIRExpressionKind::Variable(HIRVariableExpression {
+                        let expr = HIRExprKind::Variable(HIRVariableExpression {
                             variable_id,
                         });
                         (expr, ty)
                     }
                     None => {
                         self.diagnostics_bag.borrow_mut().report_undeclared_variable(&identifier);
-                        (HIRExpressionKind::Void, Type::Error)
+                        (HIRExprKind::Void, Type::Error)
                     }
                 }
             }
-            ASTExpressionKind::Assignment(expr) => {
-                let target = self.gen_expression(&expr.assignee);
+            ExprKind::Assignment(expr) => {
+                let target = self.gen_expression(&expr.left);
                 let ty = match &target.kind {
-                    HIRExpressionKind::Variable(variable_expr) => {
+                    HIRExprKind::Variable(variable_expr) => {
                         let scope = self.scope.borrow();
                         let variable = scope.get_variable(&variable_expr.variable_id);
                         if !variable.is_mutable {
-                            self.diagnostics_bag.borrow_mut().report_cannot_assign_twice_to_immutable_variable(&expr.assignee.span());
+                            self.diagnostics_bag.borrow_mut().report_cannot_assign_twice_to_immutable_variable(&expr.left.span());
                         }
                         variable.ty.clone()
                     }
-                    HIRExpressionKind::Deref(deref_expr) => {
+                    HIRExprKind::Deref(deref_expr) => {
                         dbg!(&target);
                         let is_mutable = match &deref_expr.target.ty {
                             Type::Ptr(_, is_mutable) => *is_mutable,
                             _ => unreachable!(),
                         };
                         if !is_mutable {
-                            self.diagnostics_bag.borrow_mut().report_cannot_assign_to_immutable_pointer(&expr.assignee.span());
+                            self.diagnostics_bag.borrow_mut().report_cannot_assign_to_immutable_pointer(&expr.left.span());
                         }
                         target.ty.clone()
                     }
-                    HIRExpressionKind::FieldAccess(field_access_expr) => {
+                    HIRExprKind::FieldAccess(field_access_expr) => {
                         let is_mutable = self.is_expr_mutable(&field_access_expr.target);
                         if !is_mutable {
-                            self.diagnostics_bag.borrow_mut().report_cannot_assign_to_immutable_field(&expr.assignee.span());
+                            self.diagnostics_bag.borrow_mut().report_cannot_assign_to_immutable_field(&expr.left.span());
                         }
                         // todo: if we get some weird error messages here, it could be because we use FieldId = 0 as a placeholder for the error case.
                         let scope = self.scope.borrow();
                         let field = scope.get_field(&field_access_expr.field_id);
                         field.ty.clone()
                     }
-                    HIRExpressionKind::Index(index_expr) => {
+                    HIRExprKind::Index(index_expr) => {
                         let is_mutable = match &index_expr.target.ty {
                             Type::Ptr(_, is_mutable) => *is_mutable,
                             _ => false
                         };
                         if !is_mutable {
-                            self.diagnostics_bag.borrow_mut().report_cannot_assign_to_immutable_index(&expr.assignee.span());
+                            self.diagnostics_bag.borrow_mut().report_cannot_assign_to_immutable_index(&expr.left.span());
                         }
                         target.ty.clone()
                     }
                     _ => {
-                        self.diagnostics_bag.borrow_mut().report_cannot_assign_to(&expr.assignee.span());
+                        self.diagnostics_bag.borrow_mut().report_cannot_assign_to(&expr.left.span());
                         Type::Error
                     }
                 };
-                let value = self.gen_expression(&expr.expression);
+                let value = self.gen_expression(&expr.right);
                 let value_ty = value.ty.clone();
                 self.ensure_type_match(&value.span, &value.ty, &ty);
-                let expr = HIRExpressionKind::Assignment(HIRAssignmentExpression {
+                let expr = HIRExprKind::Assignment(HIRAssignmentExpression {
                     target: Box::new(target),
                     value: Box::new(value),
                 });
                 (expr, value_ty)
             }
-            ASTExpressionKind::Boolean(expr) => {
+            ExprKind::Boolean(expr) => {
                 let ty = Type::Bool;
-                let expr = HIRExpressionKind::Literal(HIRLiteralExpression {
+                let expr = HIRExprKind::Literal(HIRLiteralExpression {
                     value: HIRLiteralValue::Boolean(expr.value),
                 });
                 (expr, ty)
             }
-            ASTExpressionKind::Call(expr) => {
+            ExprKind::Call(expr) => {
                 let callee = self.resolve_callee(&expr.callee);
-                let arguments: Vec<HIRExpression> = expr.arguments.iter().map(|arg| self.gen_expression(arg)).collect();
+                let arguments: Vec<HIRExpr> = expr.arguments.iter().map(|arg| self.gen_expression(arg)).collect();
                 let ty = match callee {
                     HIRCallee::Function(id) => {
                         let scope = self.scope.borrow();
@@ -919,48 +895,48 @@ impl HIRGen {
                         Type::Error
                     }
                 };
-                let expr = HIRExpressionKind::Call(HIRCallExpression {
+                let expr = HIRExprKind::Call(HIRCallExpression {
                     callee,
                     args: arguments,
                 });
                 (expr, ty)
             }
-            ASTExpressionKind::Error(_) => {
+            ExprKind::Error(_) => {
                 unimplemented!()
             }
-            ASTExpressionKind::Ref(expr) => {
+            ExprKind::Ref(expr) => {
                 let inner = self.gen_expression(&expr.expr);
                 let (ty, expr) = self.ref_expression(&expr.expr.span(), expr.mut_token.is_some(), inner);
                 (expr, ty)
             }
-            ASTExpressionKind::Deref(deref_expr) => {
+            ExprKind::Deref(deref_expr) => {
                 let inner = self.gen_expression(&deref_expr.expr);
                 let (ty, expr) = self.deref_expression(&expr.span(), inner);
                 (expr, ty)
             }
-            ASTExpressionKind::Char(expr) => {
+            ExprKind::Char(expr) => {
                 let ty = Type::Char;
-                let expr = HIRExpressionKind::Literal(HIRLiteralExpression {
+                let expr = HIRExprKind::Literal(HIRLiteralExpression {
                     value: HIRLiteralValue::Char(expr.value),
                 });
                 (expr, ty)
             }
-            ASTExpressionKind::Cast(expr) => {
+            ExprKind::Cast(expr) => {
                 let inner = self.gen_expression(&expr.expr);
                 let ty = self.resolve_type_syntax(&expr.ty);
                 // todo: introduce cast matrix
-                let expr = HIRExpressionKind::Cast(HIRCastExpression {
+                let expr = HIRExprKind::Cast(HIRCastExpression {
                     expression: Box::new(inner),
                     ty: ty.clone(),
                 });
                 (expr, ty)
             }
-            ASTExpressionKind::MemberAccess(expr) => {
+            ExprKind::MemberAccess(expr) => {
                 let mut target = self.gen_expression(&expr.expr);
                 let span = target.span.clone();
                 if expr.access_operator.kind == TokenKind::Arrow {
                     let (ty, expr) = self.ref_expression(&span, true, target);
-                    target = HIRExpression {
+                    target = HIRExpr {
                         kind: expr,
                         ty,
                         span: span.clone(),
@@ -984,13 +960,13 @@ impl HIRGen {
                         (Type::Error, FieldIdx::new(0))
                     }
                 };
-                let expr = HIRExpressionKind::FieldAccess(HIRFieldAccessExpression {
+                let expr = HIRExprKind::FieldAccess(HIRFieldAccessExpression {
                     target: Box::new(target),
                     field_id: member_id,
                 });
                 (expr, ty)
             }
-            ASTExpressionKind::StructInit(expr) => {
+            ExprKind::StructInit(expr) => {
                 let lookup_result = self.map_lookup_result(&expr.identifier, self.scope.borrow_mut().lookup_struct_qualified(&expr.identifier));
                 let expr = match lookup_result {
                     Ok(struct_id) => {
@@ -1028,7 +1004,7 @@ impl HIRGen {
                                         self.diagnostics_bag.borrow_mut().report_missing_field_in_struct(&expr.identifier.span(), struct_.name.unqualified_name(), &self.scope.borrow().get_field(&field).name);
                                     }
                                 }
-                                let expr = HIRExpressionKind::StructInit(HIRStructInitExpression {
+                                let expr = HIRExprKind::StructInit(HIRStructInitExpression {
                                     struct_id,
                                     fields,
                                 });
@@ -1040,14 +1016,14 @@ impl HIRGen {
                 };
                 match expr {
                     None => {
-                        (HIRExpressionKind::Void, Type::Error)
+                        (HIRExprKind::Void, Type::Error)
                     }
                     Some(expr) => {
                         expr
                     }
                 }
             }
-            ASTExpressionKind::Index(expr) => {
+            ExprKind::Index(expr) => {
                 let target = self.gen_expression(&expr.target);
                 let index = self.gen_expression(&expr.index);
                 self.ensure_type_match(&index.span, &index.ty, &Type::Integer(IntSize::ISize));
@@ -1063,14 +1039,43 @@ impl HIRGen {
                         Type::Error
                     }
                 };
-                let expr = HIRExpressionKind::Index(HIRIndexExpression {
+                let expr = HIRExprKind::Index(HIRIndexExpression {
                     target: Box::new(target),
                     index: Box::new(index),
                 });
                 (expr, ty)
             }
+            ExprKind::Block(expr) => {
+                return self.gen_block(expr);
+            }
+            ExprKind::While(expr) => {
+                let condition = self.gen_expression(&expr.condition);
+                let body = self.gen_block(&expr.body);
+                // todo: check if we break out of the loop
+                (HIRExprKind::While(HIRWhileExpr {
+                    body: Box::new(body),
+                    condition: Box::new(condition),
+                }), Type::Void)
+            }
+            ExprKind::If(expr) => {
+                let condition = self.gen_expression(&expr.condition);
+                let then_branch = self.gen_block(&expr.then_branch);
+                let else_branch = expr.else_branch.as_ref().map(|else_branch| self.gen_block(&else_branch.expr));
+                let ty = match else_branch {
+                    None => Type::Void,
+                    Some(else_branch) => {
+                        self.ensure_type_match(&else_branch.span, &else_branch.ty, &then_branch.ty);
+                        then_branch.ty.clone()
+                    }
+                };
+                (HIRExprKind::If(HIRIfExpr {
+                    condition: Box::new(condition),
+                    then: Box::new(then_branch),
+                    else_: else_branch.map(|else_branch| Box::new(else_branch)),
+                }), ty)
+            }
         };
-        HIRExpression {
+        HIRExpr {
             kind,
             ty,
             span: expr.span(),
@@ -1094,15 +1099,15 @@ impl HIRGen {
         }
     }
 
-    fn ref_expression(&self, span: &TextSpan, is_mut: bool, inner: HIRExpression) -> (Type, HIRExpressionKind) {
+    fn ref_expression(&self, span: &TextSpan, is_mut: bool, inner: HIRExpr) -> (Type, HIRExprKind) {
         let ty = Type::Ptr(Box::new(inner.ty.clone()), is_mut);
-        let expr = HIRExpressionKind::Ref(HIRRefExpression {
+        let expr = HIRExprKind::Ref(HIRRefExpression {
             expression: Box::new(inner),
         });
         (ty, expr)
     }
 
-    fn deref_expression(&mut self, inner_span: &TextSpan, inner: HIRExpression) -> (Type, HIRExpressionKind) {
+    fn deref_expression(&mut self, inner_span: &TextSpan, inner: HIRExpr) -> (Type, HIRExprKind) {
         let ty = match &inner.ty {
             Type::Ptr(ty, _) => {
                 if **ty == Type::Void {
@@ -1115,20 +1120,20 @@ impl HIRGen {
                 Type::Error
             }
         };
-        let expr = HIRExpressionKind::Deref(HIRDerefExpression {
+        let expr = HIRExprKind::Deref(HIRDerefExpression {
             target: Box::new(inner),
         });
         (ty, expr)
     }
 
-    fn is_expr_mutable(&self, expr: &HIRExpression) -> bool {
+    fn is_expr_mutable(&self, expr: &HIRExpr) -> bool {
         match &expr.kind {
-            HIRExpressionKind::Variable(expr) => {
+            HIRExprKind::Variable(expr) => {
                 let scope = self.scope.borrow();
                 let variable = scope.get_variable(&expr.variable_id);
                 variable.is_mutable
             }
-            HIRExpressionKind::Deref(_) => {
+            HIRExprKind::Deref(_) => {
                 match expr.ty {
                     Type::Ptr(_, is_mutable) => {
                         is_mutable
@@ -1138,7 +1143,7 @@ impl HIRGen {
                     }
                 }
             }
-            HIRExpressionKind::Index(expr) => {
+            HIRExprKind::Index(expr) => {
                 match expr.target.ty {
                     Type::Ptr(_, is_mutable) => {
                         is_mutable
@@ -1154,9 +1159,9 @@ impl HIRGen {
         }
     }
 
-    fn resolve_callee(&mut self, callee: &ASTExpression) -> HIRCallee {
+    fn resolve_callee(&mut self, callee: &Expr) -> HIRCallee {
         match &callee.kind {
-            ASTExpressionKind::Identifier(expr) => {
+            ExprKind::Identifier(expr) => {
                 let lookup_result = self.scope.borrow_mut().lookup_function_qualified(&expr.identifier);
                 let function_id = self.map_lookup_result(&expr.identifier, lookup_result);
                 match function_id {
@@ -1225,8 +1230,8 @@ impl HIRGen {
         expected
     }
 
-    fn resolve_bin_op_ty(&self, span: &TextSpan, left: &Type, right: &Type, op: &HIRBinaryOperator) -> Type {
-        let table  = op.get_type_table();
+    fn resolve_bin_op_ty(&self, span: &TextSpan, left: &Type, right: &Type, op: &BinOperator) -> Type {
+        let table = op.get_type_table();
         match table.into_iter().find(|(l, r, _)| left.is_assignable_to(l) && right.is_assignable_to(r)) {
             Some((_, _, ty)) => ty,
             None => {
@@ -1236,8 +1241,8 @@ impl HIRGen {
         }
     }
 
-    fn resolve_un_op_ty(&self, span: &TextSpan, operand: &Type, op: &HIRUnaryOperator) -> Type {
-        let table  = op.get_type_table();
+    fn resolve_un_op_ty(&self, span: &TextSpan, operand: &Type, op: &UnOperator) -> Type {
+        let table = op.get_type_table();
         match table.into_iter().find(|(t, _)| operand.is_assignable_to(t)) {
             Some((_, ty)) => ty,
             None => {
@@ -1254,7 +1259,7 @@ struct HIRGlobalSymbolGatherer<'a> {
     hir_gen: &'a mut HIRGen,
     ast: &'a Ast,
     diagnostics_bag: DiagnosticsBagCell,
-    global_initializers: Vec<(VariableIdx, HIRExpression)>,
+    global_initializers: Vec<(VariableIdx, HIRExpr)>,
 }
 
 impl ASTVisitor for HIRGlobalSymbolGatherer<'_> {
@@ -1262,9 +1267,9 @@ impl ASTVisitor for HIRGlobalSymbolGatherer<'_> {
         self.ast
     }
 
-    fn visit_mod_decl_statement(&mut self, mod_decl_stmt: &ASTModDeclStatement) {}
+    fn visit_module_declaration(&mut self, mod_decl_stmt: &ModuleDeclaration) {}
 
-    fn visit_struct_decl_statement(&mut self, struct_decl_stmt: &ASTStructDeclStatement) {
+    fn visit_struct_declaration(&mut self, struct_decl_stmt: &StructDeclaration) {
         let id = self.hir_gen.scope.borrow().lookup_struct_unqualified(&struct_decl_stmt.identifier.span.literal).unwrap();
         let fields = struct_decl_stmt.fields.iter().map(|f| {
             let ty = self.hir_gen.resolve_type_syntax(&f.ty.ty);
@@ -1274,41 +1279,41 @@ impl ASTVisitor for HIRGlobalSymbolGatherer<'_> {
     }
 
 
-    fn visit_func_decl_statement(&mut self, func_decl_statement: &ASTFuncDeclStatement) {
+    fn visit_function_declaration(&mut self, func_decl_statement: &FunctionDeclaration) {
         common::declare_function(self.hir_gen, self.diagnostics_bag.clone(), func_decl_statement);
     }
 
-    fn visit_let_statement(&mut self, let_statement: &ASTLetStatement, statement: &ASTStatement) {
+    fn visit_let_statement(&mut self, let_statement: &LetStmt, statement: &Stmt) {
         let variable_declaration_stmt = common::declare_variable(self.hir_gen, let_statement);
         self.global_initializers.push((variable_declaration_stmt.variable_id, variable_declaration_stmt.initializer));
     }
 
-    fn visit_index_expression(&mut self, index_expression: &ASTIndexExpression, expr: &ASTExpression) {}
+    fn visit_index_expression(&mut self, index_expression: &ast::expr::IndexExpr, expr: &Expr) {}
 
-    fn visit_struct_init_expression(&mut self, struct_init_expression: &ASTStructInitExpression, expr: &ASTExpression) {}
+    fn visit_struct_init_expression(&mut self, struct_init_expression: &ast::expr::StructInitExpr, expr: &Expr) {}
 
-    fn visit_member_access_expression(&mut self, member_access_expression: &ASTMemberAccessExpression, expr: &ASTExpression) {}
+    fn visit_member_access_expression(&mut self, member_access_expression: &ast::expr::MemberAccessExpr, expr: &Expr) {}
 
-    fn visit_cast_expression(&mut self, cast_expression: &ASTCastExpression, expr: &ASTExpression) {}
+    fn visit_cast_expression(&mut self, cast_expression: &ast::expr::CastExpr, expr: &Expr) {}
 
-    fn visit_char_expression(&mut self, char_expression: &ASTCharExpression, expr: &ASTExpression) {}
+    fn visit_char_expression(&mut self, char_expression: &ast::expr::CharExpr, expr: &Expr) {}
 
-    fn visit_deref_expression(&mut self, deref_expression: &ASTDerefExpression) {}
+    fn visit_deref_expression(&mut self, deref_expression: &ast::expr::DerefExpr) {}
 
-    fn visit_ref_expression(&mut self, ref_expression: &ASTRefExpression) {}
+    fn visit_ref_expression(&mut self, ref_expression: &ast::expr::RefExpr) {}
 
-    fn visit_string_expression(&mut self, string_expression: &ASTStringExpression, expr: &ASTExpression) {}
+    fn visit_string_expression(&mut self, string_expression: &ast::expr::StringExpr, expr: &Expr) {}
 
-    fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression, expr: &ASTExpression) {}
+    fn visit_assignment_expression(&mut self, assignment_expression: &ast::expr::AssignExpr, expr: &Expr) {}
 
-    fn visit_identifier_expression(&mut self, variable_expression: &ASTIdentifierExpression, expr: &ASTExpression) {}
+    fn visit_identifier_expression(&mut self, variable_expression: &ast::expr::IdenExpr, expr: &Expr) {}
 
-    fn visit_number_expression(&mut self, number: &ASTNumberExpression, expr: &ASTExpression) {}
+    fn visit_number_expression(&mut self, number: &ast::expr::NumberExpr, expr: &Expr) {}
 
-    fn visit_boolean_expression(&mut self, boolean: &ASTBooleanExpression, expr: &ASTExpression) {}
+    fn visit_boolean_expression(&mut self, boolean: &ast::expr::BoolExpr, expr: &Expr) {}
 
     fn visit_error(&mut self, span: &TextSpan) {}
 
-    fn visit_unary_expression(&mut self, unary_expression: &ASTUnaryExpression, expr: &ASTExpression) {}
+    fn visit_unary_expression(&mut self, unary_expression: &ast::expr::UnaryExpr, expr: &Expr) {}
 }
 

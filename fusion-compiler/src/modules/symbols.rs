@@ -2,7 +2,7 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 
 use fusion_compiler::{idx};
-use crate::ast::lexer::Token;
+use crate::ast::lexer::token::Token;
 
 use crate::hir::{FieldIdx, FunctionIdx, StructIdx, VariableIdx};
 use crate::modules::scopes::GlobalScope;
