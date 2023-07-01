@@ -77,17 +77,17 @@ impl ASTPrinter {
 
 impl ASTVisitor for ASTPrinter {
 
-    fn visit_function_declaration(&mut self, ast: &mut Ast, func_decl_statement: &FunctionDeclaration) {
+    fn visit_func_expr(&mut self, ast: &mut Ast, func_expr: &FuncExpr, expr_id: ExprId) {
         self.add_keyword("func");
         self.add_whitespace();
-        self.add_text(&func_decl_statement.identifier.span.literal);
-        let are_parameters_empty = func_decl_statement.parameters.is_empty();
+        let decl = &func_expr.decl;
+        let are_parameters_empty = decl.parameters.is_empty();
         if !are_parameters_empty {
             self.add_text("(");
         } else {
             self.add_whitespace();
         }
-        for (i, parameter) in func_decl_statement.parameters.iter().enumerate() {
+        for (i, parameter) in decl.parameters.iter().enumerate() {
             if i != 0 {
                 self.add_text(",");
                 self.add_whitespace();
@@ -99,7 +99,7 @@ impl ASTVisitor for ASTPrinter {
             self.add_text(")");
             self.add_whitespace();
         }
-        self.visit_statement(ast, func_decl_statement.body);
+        self.visit_expression(ast, decl.body);
     }
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStmt) {
         self.add_keyword("return");
@@ -165,7 +165,7 @@ impl ASTVisitor for ASTPrinter {
     }
 
     fn visit_call_expression(&mut self, ast: &mut Ast,call_expression: &CallExpr, expr: &Expr) {
-        self.add_text(&call_expression.identifier.span.literal);
+        self.visit_expression(ast, call_expression.callee);
         self.add_text("(");
         for (i, argument) in call_expression.arguments.iter().enumerate() {
             if i != 0 {

@@ -1,10 +1,12 @@
 use std::fmt::{Display, Formatter};
+use crate::compilation_unit::FunctionIdx;
 
 #[derive(Debug, Clone)]
 pub enum Type {
     Int,
     Bool,
     Void,
+    Function(FunctionIdx),
     Unresolved,
     Error,
 }
@@ -16,6 +18,8 @@ impl Display for Type {
             Type::Bool => "bool",
             Type::Unresolved => "unresolved",
             Type::Void => "void",
+            // todo
+            Type::Function(_) => "function",
             Type::Error => "?",
         };
 
@@ -24,10 +28,20 @@ impl Display for Type {
 }
 
 impl Type {
+    
+    pub fn expect_function(&self) -> &FunctionIdx {
+        match self {
+            Type::Function(idx) => idx,
+            _ => panic!("Expected function type"),
+        }
+    }
+    
     pub fn is_assignable_to(&self, other: &Type) -> bool {
         match (self, other) {
             (Type::Int, Type::Int) => true,
             (Type::Bool, Type::Bool) => true,
+            (Type::Void, Type::Void) => true,
+            (Type::Function(_), Type::Function(_)) => true,
             (Type::Error, _) => true,
             (_, Type::Error) => true,
             _ => false,

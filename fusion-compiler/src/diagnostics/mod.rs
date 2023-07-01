@@ -60,12 +60,12 @@ impl DiagnosticsBag {
         self.report_error(format!("Undeclared variable '{}'", token.span.literal), token.span.clone());
     }
 
-    pub fn report_undeclared_function(&mut self, token: &Token) {
-        self.report_error(format!("Undeclared function '{}'", token.span.literal), token.span.clone());
+    pub fn report_cannot_call_non_callable_expression(&mut self, span: &TextSpan, ty: &Type) {
+        self.report_error(format!("Cannot call non-callable expression of type '{}'", ty), span.clone());
     }
 
-    pub fn report_invalid_argument_count(&mut self, token: &Token, expected: usize, actual: usize) {
-        self.report_error(format!("Function '{}' expects {} arguments, but was given {}", token.span.literal, expected, actual), token.span.clone());
+    pub fn report_invalid_argument_count(&mut self, callee: &TextSpan, expected: usize, actual: usize) {
+        self.report_error(format!("Function '{}' expects {} arguments, but was given {}", callee.literal, expected, actual), callee.clone());
     }
 
     pub fn report_function_already_declared(&mut self, token: &Token) {
