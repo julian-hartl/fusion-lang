@@ -7,7 +7,7 @@ use natrix_back::codegen::isa::{Architecture, Endianness};
 
 use natrix_back::codegen::register_allocator;
 use natrix_back::emu::Emulator;
-use natrix_middle::{FrontBridge, optimization};
+use natrix_middle::{FrontBridge, optimization, Verifier};
 
 #[derive(Parser, Debug)]
 #[clap(name = "natrix")]
@@ -38,6 +38,14 @@ fn main() -> Result<()> {
     println!("{:?}", module);
     let mut module = FrontBridge::new().bridge(module);
     println!("{:?}", module);
+    for (_, function)in &module.functions {
+        let verifier = Verifier::new(function);
+        let verify_result = verifier.verify();
+        println!("{:?}", verify_result);
+        for error in verify_result {
+            println!("{error}");
+        }
+    }
     let mut config = optimization::PipelineConfig::o1();
     config.dead_code_elimination = false;
     // module.optimize(config);

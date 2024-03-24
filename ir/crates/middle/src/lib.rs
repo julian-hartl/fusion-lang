@@ -24,4 +24,7 @@ mod analysis;
 pub mod test;
 pub mod ty;
 mod front_bridge;
+mod verifier;
+
+pub use verifier::Verifier;
 
