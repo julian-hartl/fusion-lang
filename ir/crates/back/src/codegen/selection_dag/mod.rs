@@ -242,7 +242,7 @@ pub enum PseudoOp<TM: TargetMachine> {
     Def(VReg),
     Copy(Register<TM>, Register<TM>),
     Ret(Option<Operand<TM>>),
-    Phi(Register<TM>, Vec<Register<TM>>),
+    Phi(Register<TM>, Vec<(Register<TM>, BasicBlockId)>),
 }
 
 impl<TM: TargetMachine> PseudoOp<TM> {
@@ -262,7 +262,9 @@ impl<TM: TargetMachine> PseudoOp<TM> {
                 Some(Operand::Reg(reg)) => smallvec![*reg],
                 _ => smallvec![],
             },
-            Self::Phi(_, regs) => regs.clone().into(),
+            Self::Phi(_, regs) => regs.iter().map(
+                |(reg, _)| *reg
+            ).collect(),
             Self::Def(_) => smallvec![],
         }
     }
